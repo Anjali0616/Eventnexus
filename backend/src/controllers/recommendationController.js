@@ -47,7 +47,7 @@ const getRecommendations = async (req, res) => {
       hasLocation,
       recommendations: paged.map(({ event, score, distanceKm, predicted, reason }) => ({
         event: {
-          ...event.toObject(),
+          ...(event.toObject ? event.toObject() : event),
           predictedAttendance: predicted,
         },
         score,

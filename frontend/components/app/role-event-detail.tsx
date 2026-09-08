@@ -646,11 +646,9 @@ export function RoleEventDetail({
               </Reveal>
             )}
 
-            {canManage && (
-              <Reveal>
-                <EventQrPoster eventId={eventId} eventTitle={event.title} event={event} ticket={registeredTicket ?? null} role={role} />
-              </Reveal>
-            )}
+            <Reveal>
+              <EventQrPoster eventId={eventId} eventTitle={event.title} event={event} ticket={registeredTicket ?? null} role={role} />
+            </Reveal>
 
               </>
             ) : null}
