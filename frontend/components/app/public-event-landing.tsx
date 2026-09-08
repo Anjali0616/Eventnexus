@@ -201,7 +201,7 @@ export function PublicEventLanding({ eventId }: { eventId: string }) {
             <h2 className="font-display text-lg font-bold text-ink">About this event</h2>
             <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
               {event.description ||
-                `Join us for ${event.title}, a ${event.category.toLowerCase()} gathering bringing together builders, leaders, and innovators.`}
+                `Join us for ${event.title}, a ${(event.category || "Event").toLowerCase()} gathering bringing together builders, leaders, and innovators.`}
             </p>
 
             {event.highlights && event.highlights.length > 0 && (

@@ -91,6 +91,8 @@ export function RoleEventDetail({
   registerIcon: RegisterIcon = Ticket,
 }: RoleEventDetailProps) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const isQrScan = searchParams?.get("qr") === "1"
   const isAttendee = role === "Attendee"
   const isAdmin = role === "Administrator"
 
@@ -192,9 +194,9 @@ export function RoleEventDetail({
   // actually use them — an organizer/org admin/system admin browsing an
   // event outside their own scope used to see the tab, click it, and get
   // a raw 403 error box instead of the tab not being there at all.
-  const organizerId = typeof event.organizer === "object" ? event.organizer._id : event.organizer
-  const eventOrgId = typeof event.organization === "object" ? event.organization._id : event.organization
-  const coHostIds = (event.coHostOrganizations ?? []).map((o) => (typeof o === "object" ? o._id : o))
+  const organizerId = event.organizer && typeof event.organizer === "object" ? (event.organizer as any)._id : event.organizer
+  const eventOrgId = event.organization && typeof event.organization === "object" ? (event.organization as any)._id : event.organization
+  const coHostIds = (event.coHostOrganizations ?? []).map((o) => (o && typeof o === "object" ? (o as any)._id : o)).filter(Boolean)
   const isOwner = !!currentUser && organizerId === currentUser._id
   const isSystemAdmin = currentUser?.role === "admin" && !currentUser.organization
   const isOrgAdmin =
@@ -337,15 +339,12 @@ export function RoleEventDetail({
   // see utils/esewa.js's sandbox defaults), Stripe can't settle in NPR so
   // Stripe can't settle NPR, so NPR events are billed in converted USD (see currency.js: floor $0.50).
   // eSewa only handles NPR — hide eSewa for non-NPR events
-  const isNprEvent = (event.price.currency || "NPR").toUpperCase() === "NPR"
+  const isNprEvent = ((event.price?.currency || "NPR") as string).toUpperCase() === "NPR"
   const showPaymentChoice = isAttendee && !isRegistered && !isFull && !isPast && !free
   const usdEstimate =
-    isNprEvent && paymentConfig?.nprUsdRate
-      ? Math.max(0.5, Math.round((event.price.amount / paymentConfig.nprUsdRate) * 100) / 100).toFixed(2)
+    isNprEvent && paymentConfig?.nprUsdRate && event.price?.amount != null
+      ? Math.max(0.5, Math.round((Number(event.price.amount) / paymentConfig.nprUsdRate) * 100) / 100).toFixed(2)
       : null
-
-  const searchParams = useSearchParams()
-  const isQrScan = searchParams?.get("qr") === "1"
   return (
     <AppShell role={role} userName={userName} title={title}>
       <div className="space-y-6">
@@ -490,7 +489,7 @@ export function RoleEventDetail({
               <div className="rounded-2xl border border-border bg-card p-6">
                 <h2 className="font-display text-lg font-bold text-ink">About this event</h2>
                 <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-                  {event.description || `Join us for ${event.title}, a ${event.category.toLowerCase()} gathering bringing together builders, leaders, and innovators.`}
+                  {event.description || `Join us for ${event.title}, a ${(event.category || "Event").toLowerCase()} gathering bringing together builders, leaders, and innovators.`}
                 </p>
                 <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
                   {[

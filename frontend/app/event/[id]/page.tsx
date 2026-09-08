@@ -1,6 +1,6 @@
 "use client"
 
-import { use } from "react"
+import { Suspense, use } from "react"
 import { RoleEventDetail } from "@/components/app/role-event-detail"
 import { PublicEventLanding } from "@/components/app/public-event-landing"
 import { useCurrentUser } from "@/lib/queries/auth"
@@ -37,7 +37,11 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   }
 
   if (!hasToken || (isError && !user)) {
-    return <PublicEventLanding eventId={id} />
+    return (
+      <Suspense fallback={<div className="flex min-h-screen items-center justify-center"><div className="size-6 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>}>
+        <PublicEventLanding eventId={id} />
+      </Suspense>
+    )
   }
 
   if (hasToken && isLoading) {
@@ -56,15 +60,17 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         : "Attendee"
 
   return (
-    <RoleEventDetail
-      eventId={id}
-      role={role}
-      userName={user?.name || "Attendee"}
-      title="Event Details"
-      backHref="/dashboard"
-      backLabel="Back to discover"
-      ticketHref="/my-tickets"
-      registerLabel="Register now"
-    />
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center"><div className="size-6 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>}>
+      <RoleEventDetail
+        eventId={id}
+        role={role}
+        userName={user?.name || "Attendee"}
+        title="Event Details"
+        backHref="/dashboard"
+        backLabel="Back to discover"
+        ticketHref="/my-tickets"
+        registerLabel="Register now"
+      />
+    </Suspense>
   )
 }

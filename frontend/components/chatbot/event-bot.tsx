@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import ReactMarkdown from "react-markdown"
-import remarkGfm from "remark-gfm"
+import dynamic from "next/dynamic"
+
+// Lazy-load heavy markdown renderer so initial bundle stays lean
+const ReactMarkdown = dynamic(() => import("react-markdown").then((m) => m.default), { ssr: false }) as any
 import {
   Plus,
   Sparkles,
@@ -18,7 +20,7 @@ import {
   RotateCcw,
   ArrowDown,
 } from "lucide-react"
-import { ensureGsap, prefersReducedMotion } from "@/lib/gsap"
+import { ensureGsapAsync, prefersReducedMotion } from "@/lib/gsap"
 import { chatbotApi } from "@/lib/api/chatbot"
 import {
   useChatbotStore,
@@ -110,6 +112,10 @@ function BotBubble({
   onQuickReply?: (q: string) => void
   onRetry?: (text: string) => void
 }) {
+  const [remarkGfm, setRemarkGfm] = useState<any>(null)
+  useEffect(() => {
+    void import("remark-gfm").then((m) => setRemarkGfm(() => (m as any).default ?? (m as any)))
+  }, [])
   return (
     <div className="bot-msg group flex flex-col items-start gap-1">
       <div
@@ -117,7 +123,7 @@ function BotBubble({
           error ? "border-destructive bg-destructive/[0.06]" : "border-secondary bg-muted"
         }`}
       >
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        <ReactMarkdown remarkPlugins={remarkGfm ? [remarkGfm] : []} components={markdownComponents}>
           {text}
         </ReactMarkdown>
       </div>
@@ -301,14 +307,21 @@ export function EventBot({
 
   useEffect(() => {
     if (!open || prefersReducedMotion()) return
-    const gsap = ensureGsap()
-    const ctx = gsap.context((self) => {
-      const q = self.selector!
-      gsap.from(panel.current, { y: 24, scale: 0.96, opacity: 0, duration: 0.35, ease: "power3.out" })
-      gsap.from(q(".bot-msg"), { y: 12, opacity: 0, stagger: 0.06, duration: 0.3, delay: 0.1 })
-      gsap.to(q(".bot-orb"), { scale: 1.12, duration: 1.4, ease: "sine.inOut", repeat: -1, yoyo: true })
-    }, panel)
-    return () => ctx.revert()
+    let ctx: any
+    let cancelled = false
+    void ensureGsapAsync().then((gsap) => {
+      if (cancelled || !gsap || !panel.current) return
+      ctx = gsap.context((self: any) => {
+        const q = self.selector!
+        gsap.from(panel.current, { y: 24, scale: 0.96, opacity: 0, duration: 0.35, ease: "power3.out" })
+        gsap.from(q(".bot-msg"), { y: 12, opacity: 0, stagger: 0.06, duration: 0.3, delay: 0.1 })
+        gsap.to(q(".bot-orb"), { scale: 1.12, duration: 1.4, ease: "sine.inOut", repeat: -1, yoyo: true })
+      }, panel)
+    })
+    return () => {
+      cancelled = true
+      ctx?.revert()
+    }
   }, [open])
 
   // Only auto-scroll to the newest message when the user is already near

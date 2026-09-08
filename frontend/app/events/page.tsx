@@ -62,14 +62,40 @@ export default function AttendeeEventsPage() {
 
   // Real-time: when an organizer publishes a new event, invalidate lists so
   // Just added / Discover update instantly without manual refresh.
+  // Lazy-load socket.io chunk; use async import so initial bundle stays lean.
   useEffect(() => {
-    const socket = getSocket()
-    if (!socket) return
+    let activeSocket: ReturnType<typeof getSocket> = null
+    let cancelled = false
     const onNewEvent = () => {
       queryClient.invalidateQueries({ queryKey: ["events"] })
     }
-    socket.on("event:created", onNewEvent)
-    return () => { socket.off("event:created", onNewEvent) }
+    const syncSocket = getSocket()
+    if (syncSocket) {
+      activeSocket = syncSocket
+      syncSocket.on("event:created", onNewEvent)
+    } else {
+      void import("@/lib/socket").then(({ getSocketAsync }) =>
+        getSocketAsync().then((s) => {
+          if (s && !cancelled) {
+            activeSocket = s
+            s.on("event:created", onNewEvent)
+          }
+        })
+      )
+    }
+    const onReady = () => {
+      const s = getSocket()
+      if (s && !cancelled && s !== activeSocket) {
+        activeSocket = s
+        s.on("event:created", onNewEvent)
+      }
+    }
+    window.addEventListener("socket:ready", onReady)
+    return () => {
+      cancelled = true
+      window.removeEventListener("socket:ready", onReady)
+      if (activeSocket) activeSocket.off("event:created", onNewEvent)
+    }
   }, [queryClient])
 
   // One-click join for free events — attendee stays on Discover, gets instant feedback.

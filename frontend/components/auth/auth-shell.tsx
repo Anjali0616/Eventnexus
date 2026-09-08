@@ -3,7 +3,7 @@
 import { useEffect, useRef, type ReactNode } from "react"
 import Link from "next/link"
 import { Hexagon, ShieldCheck, Sparkles, Cloud } from "lucide-react"
-import { ensureGsap, prefersReducedMotion } from "@/lib/gsap"
+import { ensureGsapAsync, prefersReducedMotion } from "@/lib/gsap"
 
 const chips = [
   { icon: ShieldCheck, label: "Secure" },
@@ -23,24 +23,31 @@ export function AuthShell({
   const root = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const gsap = ensureGsap()
     if (prefersReducedMotion()) return
-    const ctx = gsap.context((self) => {
-      const q = self.selector!
-      const tl = gsap.timeline({ defaults: { ease: "power3.out" } })
-      tl.from(q(".auth-panel"), { x: -40, opacity: 0, duration: 0.7 })
-        .from(q(".auth-chip"), { y: 16, opacity: 0, stagger: 0.1, duration: 0.5 }, "-=0.3")
-        .from(q(".auth-field"), { y: 20, opacity: 0, stagger: 0.08, duration: 0.5 }, "-=0.2")
-      gsap.to(q(".auth-orb"), {
-        scale: 1.2,
-        opacity: 0.5,
-        duration: 5,
-        ease: "sine.inOut",
-        repeat: -1,
-        yoyo: true,
-      })
-    }, root)
-    return () => ctx.revert()
+    let ctx: any
+    let cancelled = false
+    void ensureGsapAsync().then((gsap) => {
+      if (cancelled || !gsap) return
+      ctx = gsap.context((self: any) => {
+        const q = self.selector!
+        const tl = gsap.timeline({ defaults: { ease: "power3.out" } })
+        tl.from(q(".auth-panel"), { x: -40, opacity: 0, duration: 0.7 })
+          .from(q(".auth-chip"), { y: 16, opacity: 0, stagger: 0.1, duration: 0.5 }, "-=0.3")
+          .from(q(".auth-field"), { y: 20, opacity: 0, stagger: 0.08, duration: 0.5 }, "-=0.2")
+        gsap.to(q(".auth-orb"), {
+          scale: 1.2,
+          opacity: 0.5,
+          duration: 5,
+          ease: "sine.inOut",
+          repeat: -1,
+          yoyo: true,
+        })
+      }, root)
+    })
+    return () => {
+      cancelled = true
+      ctx?.revert()
+    }
   }, [])
 
   return (

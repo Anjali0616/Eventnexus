@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { Sparkles, BarChart3, Users, Calendar, TrendingUp, Mail, Target, Bell, ChevronRight, Zap } from "lucide-react"
-import { ensureGsap, prefersReducedMotion, ScrollTrigger } from "@/lib/gsap"
+import { ensureGsapAsync, prefersReducedMotion } from "@/lib/gsap"
 
 const steps = [
   {
@@ -177,80 +177,94 @@ export function HowItWorks() {
   const activeStepRef = useRef(0)
 
   useEffect(() => {
-    const gsap = ensureGsap()
     const section = sectionRef.current
     const boardShell = boardShellRef.current
     if (!section || !boardShell) return
 
-    const ctx = gsap.context(() => {
-      if (!prefersReducedMotion()) {
-        // Gentle floating animation for the active visual card preview.
-        gsap.fromTo(
-          ".interactive-mockup",
-          { y: 5 },
-          {
-            y: -5,
-            duration: 2.5,
-            repeat: -1,
-            yoyo: true,
-            ease: "power1.inOut",
-          },
-        )
+    let ctx: any
+    let cancelled = false
+    void ensureGsapAsync().then((gsap) => {
+      if (cancelled || !gsap) return
+      const ST = (gsap as any).ScrollTrigger ?? null
+      // Fallback to dynamic import if ScrollTrigger not on instance (chunk split)
+      const getST = ST
+        ? Promise.resolve(ST)
+        : import("gsap/ScrollTrigger").then((m) => (m as any).ScrollTrigger ?? (m as any).default)
+      void getST.then((ScrollTrigger: any) => {
+        if (cancelled) return
+        ctx = gsap.context(() => {
+          if (!prefersReducedMotion()) {
+            gsap.fromTo(
+              ".interactive-mockup",
+              { y: 5 },
+              {
+                y: -5,
+                duration: 2.5,
+                repeat: -1,
+                yoyo: true,
+                ease: "power1.inOut",
+              },
+            )
 
-        gsap.from(".how-header", {
-          scrollTrigger: {
-            trigger: section,
-            start: "top 80%",
-          },
-          opacity: 0,
-          y: 40,
-          duration: 0.8,
-          ease: "power2.out",
-        })
+            gsap.from(".how-header", {
+              scrollTrigger: {
+                trigger: section,
+                start: "top 80%",
+              },
+              opacity: 0,
+              y: 40,
+              duration: 0.8,
+              ease: "power2.out",
+            })
 
-        gsap.from(".interactive-board", {
-          scrollTrigger: {
-            trigger: boardShell,
-            start: "top 85%",
-          },
-          opacity: 0,
-          scale: 0.97,
-          y: 50,
-          duration: 1,
-          ease: "power3.out",
-        })
-      }
-
-      ScrollTrigger.create({
-        id: "how-it-works-pin",
-        trigger: boardShell,
-        start: "top top+=96",
-        end: () => `+=${window.innerHeight * Math.max(steps.length - 1, 1) * 0.72}`,
-        pin: true,
-        anticipatePin: 1,
-        scrub: 0.35,
-        invalidateOnRefresh: true,
-        snap:
-          steps.length > 1
-            ? {
-                snapTo: 1 / (steps.length - 1),
-                duration: { min: 0.2, max: 0.42 },
-                delay: 0,
-                directional: true,
-                ease: "power2.out",
-              }
-            : undefined,
-        onUpdate: (self) => {
-          const nextStep = Math.min(steps.length - 1, Math.round(self.progress * (steps.length - 1)))
-          if (nextStep !== activeStepRef.current) {
-            activeStepRef.current = nextStep
-            setActiveStep(nextStep)
+            gsap.from(".interactive-board", {
+              scrollTrigger: {
+                trigger: boardShell,
+                start: "top 85%",
+              },
+              opacity: 0,
+              scale: 0.97,
+              y: 50,
+              duration: 1,
+              ease: "power3.out",
+            })
           }
-        },
-      })
-    }, section)
 
-    return () => ctx.revert()
+          ScrollTrigger.create({
+            id: "how-it-works-pin",
+            trigger: boardShell,
+            start: "top top+=96",
+            end: () => `+=${window.innerHeight * Math.max(steps.length - 1, 1) * 0.72}`,
+            pin: true,
+            anticipatePin: 1,
+            scrub: 0.35,
+            invalidateOnRefresh: true,
+            snap:
+              steps.length > 1
+                ? {
+                    snapTo: 1 / (steps.length - 1),
+                    duration: { min: 0.2, max: 0.42 },
+                    delay: 0,
+                    directional: true,
+                    ease: "power2.out",
+                  }
+                : undefined,
+            onUpdate: (self: any) => {
+              const nextStep = Math.min(steps.length - 1, Math.round(self.progress * (steps.length - 1)))
+              if (nextStep !== activeStepRef.current) {
+                activeStepRef.current = nextStep
+                setActiveStep(nextStep)
+              }
+            },
+          })
+        }, section)
+      })
+    })
+
+    return () => {
+      cancelled = true
+      ctx?.revert()
+    }
   }, [])
 
   useEffect(() => {
@@ -258,35 +272,43 @@ export function HowItWorks() {
 
     if (prefersReducedMotion()) return
 
-    const gsap = ensureGsap()
     const visualContainer = visualContainerRef.current
     if (!visualContainer) return
 
-    gsap.fromTo(
-      visualContainer,
-      { autoAlpha: 0.35, y: 18, scale: 0.985 },
-      {
-        autoAlpha: 1,
-        y: 0,
-        scale: 1,
-        duration: 0.38,
-        ease: "power2.out",
-        overwrite: true,
-        clearProps: "transform,opacity,visibility",
-      },
-    )
+    let cancelled = false
+    void ensureGsapAsync().then((gsap) => {
+      if (cancelled || !gsap || !visualContainer) return
+      gsap.fromTo(
+        visualContainer,
+        { autoAlpha: 0.35, y: 18, scale: 0.985 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          scale: 1,
+          duration: 0.38,
+          ease: "power2.out",
+          overwrite: true,
+          clearProps: "transform,opacity,visibility",
+        },
+      )
+    })
+    return () => {
+      cancelled = true
+    }
   }, [activeStep])
 
   const handleStepClick = (index: number) => {
     activeStepRef.current = index
     setActiveStep(index)
 
-    const trigger = ScrollTrigger.getById("how-it-works-pin")
-    if (!trigger) return
-
-    const progress = steps.length > 1 ? index / (steps.length - 1) : 0
-    const scrollTarget = trigger.start + (trigger.end - trigger.start) * progress
-    window.scrollTo({ top: scrollTarget + 1, behavior: "smooth" })
+    void import("gsap/ScrollTrigger").then((m) => {
+      const ST = (m as any).ScrollTrigger ?? (m as any).default ?? (m as any)
+      const trigger = ST.getById("how-it-works-pin")
+      if (!trigger) return
+      const progress = steps.length > 1 ? index / (steps.length - 1) : 0
+      const scrollTarget = trigger.start + (trigger.end - trigger.start) * progress
+      window.scrollTo({ top: scrollTarget + 1, behavior: "smooth" })
+    })
   }
 
   const VisualComponent = visuals[activeStep]

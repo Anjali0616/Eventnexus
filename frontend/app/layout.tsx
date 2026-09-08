@@ -1,6 +1,5 @@
 import type { Metadata } from 'next'
 import { Inter, JetBrains_Mono } from 'next/font/google'
-import { Analytics } from '@vercel/analytics/next'
 import { QueryProvider } from '@/components/providers/query-provider'
 import { GoogleProvider } from '@/components/providers/google-provider'
 import { RealtimeNotifications } from '@/components/providers/realtime-notifications'
@@ -24,7 +23,6 @@ export const metadata: Metadata = {
   title: 'EventNexus — AI-Enabled Secure Event Management',
   description:
     'EventNexus brings AI intelligence, secure cloud infrastructure, and real-time collaboration to every event — from small workshops to global multi-organization conferences.',
-  generator: 'v0.app',
 }
 
 export const viewport = {
@@ -55,7 +53,6 @@ export default function RootLayout({
             </ThemeProvider>
           </QueryProvider>
         </GoogleProvider>
-        {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>
   )

@@ -2,7 +2,7 @@
 
 import { Suspense, use, useState } from "react"
 import Link from "next/link"
-import { notFound, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import {
   ArrowLeft,
   Calendar,
@@ -97,7 +97,15 @@ export default function PublicEventPage({ params }: { params: Promise<{ id: stri
     )
   }
 
-  if (isError || !event) notFound()
+  if (isError || !event) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center">
+        <p className="font-display text-lg font-bold text-ink">Event not found</p>
+        <p className="text-sm text-muted-foreground">This event may have been removed or the link is incorrect.</p>
+        <Link href="/events" className="text-sm font-semibold text-primary hover:underline">Browse events</Link>
+      </div>
+    )
+  }
 
   const isAttendeeUser = user?.role === "attendee"
   const isStaffUser = user?.role === "organizer" || user?.role === "admin" || user?.role === "org_admin"
@@ -154,9 +162,11 @@ export default function PublicEventPage({ params }: { params: Promise<{ id: stri
   const primaryDisabled = primaryPending || isRegistered || (isFull && !isRegistered)
 
   const showPaymentChoice = !isRegistered && !isFull && !free
-  const isNprEvent = (event.price.currency || "NPR").toUpperCase() === "NPR"
+  const isNprEvent = ((event.price?.currency || "NPR") as string).toUpperCase() === "NPR"
   const usdEstimate =
-    isNprEvent && paymentConfig?.nprUsdRate ? (event.price.amount / paymentConfig.nprUsdRate).toFixed(2) : null
+    isNprEvent && paymentConfig?.nprUsdRate && event.price?.amount != null
+      ? Math.max(0.5, Math.round((Number(event.price.amount) / paymentConfig.nprUsdRate) * 100) / 100).toFixed(2)
+      : null
 
   return (
     <div className="min-h-screen bg-background">
@@ -254,7 +264,7 @@ export default function PublicEventPage({ params }: { params: Promise<{ id: stri
               <div className="rounded-2xl border border-border bg-card p-6">
                 <h2 className="font-display text-lg font-bold text-ink">About this event</h2>
                 <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-                  {event.description || `Join us for ${event.title}, a ${event.category.toLowerCase()} gathering bringing together builders, leaders, and innovators.`}
+                  {event.description || `Join us for ${event.title}, a ${(event.category || "Event").toLowerCase()} gathering bringing together builders, leaders, and innovators.`}
                 </p>
                 <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
                   {[

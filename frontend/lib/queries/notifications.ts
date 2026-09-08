@@ -8,7 +8,7 @@ import {
   type RealtimeNotificationPush,
 } from "../api/notifications";
 import { useHasToken } from "../hooks/use-has-token";
-import { disconnectSocket, getSocket } from "../socket";
+import { disconnectSocket, getSocket, getSocketAsync } from "../socket";
 
 export const notificationKeys = {
   list: ["notifications", "list"] as const,
@@ -113,18 +113,13 @@ export function useRealtimeNotifications() {
       return;
     }
 
-    const socket = getSocket();
-    if (!socket) return;
-
     const onCreated = ({ notification, unread }: RealtimeNotificationPush) => {
-      // Use real count if provided, otherwise increment local - avoids hard-coded 1 bug
       if (typeof unread === "number") {
         queryClient.setQueryData(notificationKeys.unreadCount, { count: unread });
       } else {
         queryClient.setQueryData(notificationKeys.unreadCount, (old: { count: number } | undefined) => ({ count: (old?.count ?? 0) + 1 }));
       }
       queryClient.invalidateQueries({ queryKey: notificationKeys.list, refetchType: "active" });
-
       const section = notificationsSectionForRole(
         (typeof window !== "undefined" && JSON.parse(localStorage.getItem("user") || "{}")?.role) || null
       );
@@ -141,12 +136,9 @@ export function useRealtimeNotifications() {
 
     const onRead = ({ id, unread }: { id: string; unread: number }) => {
       queryClient.setQueryData(notificationKeys.unreadCount, { count: unread });
-      // Flip the cached single-notification doc if present.
       queryClient.setQueryData<{ notification: Notification }>(notificationKeys.detail(id), (old) =>
         old ? { notification: { ...old.notification, read: true } } : old
       );
-      // Flip in-place inside any cached list payloads (fast path — avoids a
-      // refetch flicker across open tabs).
       queryClient.setQueriesData<{ notifications: Notification[] }>(
         { queryKey: notificationKeys.list, exact: false },
         (old) =>
@@ -171,16 +163,46 @@ export function useRealtimeNotifications() {
       queryClient.setQueryData(notificationKeys.unreadCount, { count });
     };
 
-    socket.on("notification:created", onCreated);
-    socket.on("notification:read", onRead);
-    socket.on("notifications:read-all", onReadAll);
-    socket.on("unread:count", onUnread);
+    let activeSocket: ReturnType<typeof getSocket> = null;
+    let cancelled = false;
+
+    const attach = (socket: NonNullable<ReturnType<typeof getSocket>>) => {
+      if (cancelled) return;
+      activeSocket = socket;
+      socket.on("notification:created", onCreated);
+      socket.on("notification:read", onRead);
+      socket.on("notifications:read-all", onReadAll);
+      socket.on("unread:count", onUnread);
+    };
+
+    const detach = () => {
+      if (activeSocket) {
+        activeSocket.off("notification:created", onCreated);
+        activeSocket.off("notification:read", onRead);
+        activeSocket.off("notifications:read-all", onReadAll);
+        activeSocket.off("unread:count", onUnread);
+      }
+    };
+
+    const syncSocket = getSocket();
+    if (syncSocket) {
+      attach(syncSocket);
+    } else {
+      void getSocketAsync().then((s) => {
+        if (s && !cancelled) attach(s);
+      });
+    }
+
+    const onReady = () => {
+      const s = getSocket();
+      if (s && !cancelled && s !== activeSocket) attach(s);
+    };
+    window.addEventListener("socket:ready", onReady);
 
     return () => {
-      socket.off("notification:created", onCreated);
-      socket.off("notification:read", onRead);
-      socket.off("notifications:read-all", onReadAll);
-      socket.off("unread:count", onUnread);
+      cancelled = true;
+      window.removeEventListener("socket:ready", onReady);
+      detach();
     };
   }, [hasToken, queryClient]);
 }

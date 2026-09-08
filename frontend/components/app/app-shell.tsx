@@ -13,11 +13,18 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react"
-import { EventBot } from "@/components/chatbot/event-bot"
+import dynamic from "next/dynamic"
 import { adminNav, attendeeNav, organizerNav, orgAdminNav } from "@/components/app/nav-configs"
 import { HelpDialog } from "@/components/app/help-dialog"
 import { NotificationBell } from "@/components/app/notification-bell"
-import { ensureGsap, prefersReducedMotion } from "@/lib/gsap"
+import { ensureGsapAsync, prefersReducedMotion } from "@/lib/gsap"
+
+const EventBot = dynamic(() => import("@/components/chatbot/event-bot").then((m) => m.EventBot), {
+  ssr: false,
+})
+const LocationPromptDynamic = dynamic(() => import("@/components/app/location-prompt").then((m) => m.LocationPrompt), {
+  ssr: false,
+})
 import { useUnreadCount } from "@/lib/queries/notifications"
 import { useCurrentUser, useLogout } from "@/lib/queries/auth"
 import { useHasTokenWithChecked } from "@/lib/hooks/use-has-token"
@@ -255,12 +262,19 @@ export function AppShell({ children, role, userName, title = "Welcome back" }: A
 
   useEffect(() => {
     if (prefersReducedMotion()) return
-    const gsap = ensureGsap()
-    const ctx = gsap.context((self) => {
-      const q = self.selector!
-      gsap.from(q(".nav-item"), { x: -16, opacity: 0, stagger: 0.05, duration: 0.4, ease: "power2.out" })
-    }, aside)
-    return () => ctx.revert()
+    let ctx: any
+    let cancelled = false
+    void ensureGsapAsync().then((gsap) => {
+      if (cancelled || !gsap || !aside.current) return
+      ctx = gsap.context((self: any) => {
+        const q = self.selector!
+        gsap.from(q(".nav-item"), { x: -16, opacity: 0, stagger: 0.05, duration: 0.4, ease: "power2.out" })
+      }, aside)
+    })
+    return () => {
+      cancelled = true
+      ctx?.revert()
+    }
   }, [])
 
   // Placed after every hook so hook order stays stable across renders.
@@ -434,7 +448,7 @@ export function AppShell({ children, role, userName, title = "Welcome back" }: A
       {!blocked && <EventBot eventId={currentEventId} />}
       {/* Asks for location once, after the post-login redirect has settled —
           see the component for why it can't live on the login page. */}
-      {!blocked && <LocationPrompt />}
+      {!blocked && <LocationPromptDynamic />}
 
       <HelpDialog
         open={helpOpen}

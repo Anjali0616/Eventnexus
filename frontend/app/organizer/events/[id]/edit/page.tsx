@@ -2,7 +2,6 @@
 
 import { use } from "react"
 import { useRouter } from "next/navigation"
-import { notFound } from "next/navigation"
 import { ArrowLeft, Loader2 } from "lucide-react"
 import Link from "next/link"
 import { AppShell } from "@/components/app/app-shell"
@@ -42,7 +41,17 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     )
   }
 
-  if (isError || !event) notFound()
+  if (isError || !event) {
+    return (
+      <AppShell role={role} userName={user?.name || "Organizer"} title="Edit Event">
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <p className="font-display text-lg font-bold text-ink">Event not found</p>
+          <p className="mt-1 text-sm text-muted-foreground">This event may have been removed.</p>
+          <Link href="/organizer/events" className="mt-4 text-sm font-semibold text-primary hover:underline">Back to events</Link>
+        </div>
+      </AppShell>
+    )
+  }
 
   return (
     <AppShell role={role} userName={user?.name || "Organizer"} title="Edit Event">

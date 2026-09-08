@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { ensureGsap, prefersReducedMotion } from "@/lib/gsap"
+import { ensureGsapAsync, prefersReducedMotion } from "@/lib/gsap"
 
 type CountUpProps = {
   to: number
@@ -31,7 +31,6 @@ export function CountUp({
   const ref = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {
-    const gsap = ensureGsap()
     const el = ref.current
     if (!el) return
 
@@ -40,20 +39,28 @@ export function CountUp({
       return
     }
 
-    const obj = { val: 0 }
-    const ctx = gsap.context(() => {
-      gsap.to(obj, {
-        val: to,
-        duration,
-        ease: "power2.out",
-        scrollTrigger: { trigger: el, start: "top 92%" },
-        onUpdate: () => {
-          el.textContent = prefix + format(obj.val, decimals) + suffix
-        },
-      })
-    }, ref)
+    let ctx: any
+    let cancelled = false
+    void ensureGsapAsync().then((gsap) => {
+      if (cancelled || !gsap || !ref.current) return
+      const obj = { val: 0 }
+      ctx = gsap.context(() => {
+        gsap.to(obj, {
+          val: to,
+          duration,
+          ease: "power2.out",
+          scrollTrigger: { trigger: el, start: "top 92%" },
+          onUpdate: () => {
+            el.textContent = prefix + format(obj.val, decimals) + suffix
+          },
+        })
+      }, ref)
+    })
 
-    return () => ctx.revert()
+    return () => {
+      cancelled = true
+      ctx?.revert()
+    }
   }, [to, prefix, suffix, decimals, duration])
 
   return (

@@ -17,32 +17,39 @@ import {
   Activity,
   ChevronDown
 } from "lucide-react"
-import { ensureGsap, prefersReducedMotion } from "@/lib/gsap"
-import { ContainerScroll } from "@/components/ui/container-scroll-animation"
+import { ensureGsapAsync, prefersReducedMotion } from "@/lib/gsap"
+import dynamic from "next/dynamic"
+const ContainerScroll = dynamic(() => import("@/components/ui/container-scroll-animation").then((m) => m.ContainerScroll), {
+  ssr: false,
+})
 
 export function Hero() {
   const root = useRef<HTMLElement>(null)
   const [activeTab, setActiveTab] = useState("overview")
 
   useEffect(() => {
-    const gsap = ensureGsap()
     const el = root.current
     if (!el) return
     if (prefersReducedMotion()) return
-
-    const ctx = gsap.context((self) => {
-      const q = self.selector!
-      // Add subtle animations to hero elements
-      gsap.from(q(".hero-line"), { 
-        y: 30, 
-        opacity: 0, 
-        duration: 0.8, 
-        stagger: 0.1, 
-        delay: 0.1 
-      })
-    }, root)
-
-    return () => ctx.revert()
+    let ctx: any
+    let cancelled = false
+    void ensureGsapAsync().then((gsap) => {
+      if (cancelled || !gsap) return
+      ctx = gsap.context((self: any) => {
+        const q = self.selector!
+        gsap.from(q(".hero-line"), {
+          y: 30,
+          opacity: 0,
+          duration: 0.8,
+          stagger: 0.1,
+          delay: 0.1,
+        })
+      }, root)
+    })
+    return () => {
+      cancelled = true
+      ctx?.revert()
+    }
   }, [])
 
   return (

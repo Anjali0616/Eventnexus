@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, type ReactNode } from "react"
-import { ensureGsap, prefersReducedMotion } from "@/lib/gsap"
+import { ensureGsapAsync, prefersReducedMotion } from "@/lib/gsap"
 
 type RevealProps = {
   children: ReactNode
@@ -38,40 +38,42 @@ export function Reveal({
   const ref = useRef<HTMLElement>(null)
 
   useEffect(() => {
-    const gsap = ensureGsap()
     const el = ref.current
     if (!el) return
+    if (prefersReducedMotion()) return
 
-    const targets: gsap.TweenTarget = stagger ? Array.from(el.children) : el
-
-    if (prefersReducedMotion()) {
-      gsap.set(targets, { opacity: 1, x: 0, y: 0, scale: 1, clearProps: "all" })
-      return
-    }
-
-    const ctx = gsap.context(() => {
-      gsap.fromTo(
-        targets,
-        { opacity: 0, y, x, ...(scale ? { scale } : {}) },
-        {
-          opacity: 1,
-          y: 0,
-          x: 0,
-          ...(scale ? { scale: 1 } : {}),
-          duration,
-          delay,
-          ease: "power3.out",
-          stagger: stagger || 0,
-          scrollTrigger: {
-            trigger: el,
-            start,
-            toggleActions: "play none none none",
+    let ctx: any
+    let cancelled = false
+    void ensureGsapAsync().then((gsap) => {
+      if (cancelled || !gsap || !ref.current) return
+      const t: any = stagger ? Array.from(el.children) : el
+      ctx = gsap.context(() => {
+        gsap.fromTo(
+          t,
+          { opacity: 0, y, x, ...(scale ? { scale } : {}) },
+          {
+            opacity: 1,
+            y: 0,
+            x: 0,
+            ...(scale ? { scale: 1 } : {}),
+            duration,
+            delay,
+            ease: "power3.out",
+            stagger: stagger || 0,
+            scrollTrigger: {
+              trigger: el,
+              start,
+              toggleActions: "play none none none",
+            },
           },
-        },
-      )
-    }, ref)
+        )
+      }, ref)
+    })
 
-    return () => ctx.revert()
+    return () => {
+      cancelled = true
+      ctx?.revert()
+    }
   }, [y, x, delay, duration, stagger, scale, start])
 
   return (
