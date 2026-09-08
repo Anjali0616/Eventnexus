@@ -133,7 +133,70 @@ const getCheckoutStatus = async (req, res) => {
     if (session.metadata?.attendeeId !== req.user._id.toString()) {
       return res.status(403).json({ message: "Not authorized to view this session" });
     }
-    const ticket = await Ticket.findOne({ "payment.stripeSessionId": session.id }).populate("event");
+    let ticket = await Ticket.findOne({ "payment.stripeSessionId": session.id }).populate("event");
+
+    // Normally the webhook (handleWebhook) issues the ticket. But webhook
+    // delivery depends on Stripe being able to reach this server's public
+    // endpoint — on a server without that configured, the webhook never
+    // arrives and the success page would poll forever. Since this endpoint
+    // already verifies payment_status straight from Stripe, self-heal by
+    // issuing the ticket here too; issueTicketOnce is idempotent so a later
+    // webhook delivery for the same session just returns the same ticket.
+    if (!ticket && session.payment_status === "paid") {
+      const { eventId, attendeeId } = session.metadata || {};
+      if (eventId && attendeeId) {
+        const [eventDoc, attendee] = await Promise.all([
+          Event.findById(eventId),
+          User.findById(attendeeId),
+        ]);
+        if (eventDoc && attendee) {
+          try {
+            const issued = await issueTicketOnce({
+              event: eventDoc,
+              attendeeId,
+              attendeeName: attendee.name,
+              payment: {
+                status: "paid",
+                provider: "stripe",
+                amount: (session.amount_total || 0) / 100,
+                currency: (session.currency || "usd").toUpperCase(),
+                stripeSessionId: session.id,
+                stripePaymentIntentId: session.payment_intent,
+              },
+            });
+            ticket = await Ticket.findById(issued._id).populate("event");
+
+            try {
+              const qrCodeDataUri = await generateQRCodeDataURI(ticket.qrToken);
+              await sendMail({
+                to: attendee.email,
+                subject: `Registration confirmed: ${eventDoc.title}`,
+                template: "ticket-confirmation",
+                templateData: {
+                  name: attendee.name,
+                  eventTitle: eventDoc.title,
+                  eventDate: new Date(eventDoc.date).toLocaleDateString("en-US", { dateStyle: "full" }),
+                  eventTime: new Date(eventDoc.date).toLocaleTimeString("en-US", { timeStyle: "short" }),
+                  venue: eventDoc.venue || "TBA",
+                  eventType: eventDoc.type || "In-person",
+                  ticketType: "Paid",
+                  quantity: 1,
+                  orderId: ticket._id.toString().slice(-8).toUpperCase(),
+                  eventId: eventDoc._id,
+                  qrCodeUrl: qrCodeDataUri,
+                },
+                metadata: { ticketId: ticket._id, eventId: eventDoc._id, stripeSessionId: session.id },
+              });
+            } catch (mailErr) {
+              console.error("[checkout status] Failed to send confirmation email:", mailErr.message);
+            }
+          } catch (issueErr) {
+            console.error("[checkout status] failed to self-heal ticket issuance:", issueErr.message);
+          }
+        }
+      }
+    }
+
     res.json({ paid: session.payment_status === "paid", ticket: ticket || null });
   } catch (error) {
     console.error("[error]", error);
