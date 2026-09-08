@@ -652,12 +652,6 @@ export function RoleEventDetail({
               </Reveal>
             )}
 
-            {/* Attendee sees agenda as read-only (already above), not the organizer SessionsPanel CRUD */}
-            {false && isAttendee && (
-              <Reveal>
-                <SessionsPanel event={event} sessions={sessionsData} createSession={createSession} updateSession={updateSession} deleteSession={deleteSession} orgSpeakers={orgSpeakers?.speakers ?? []} />
-              </Reveal>
-            )}
               </>
             ) : null}
 
