@@ -22,6 +22,13 @@ RUN if [ -f pnpm-lock.yaml ]; then \
       npm install; \
     fi
 
+# ── builder: compile TypeScript to dist ─────────────────────
+FROM base AS builder
+COPY package.json pnpm-lock.yaml* package-lock.json* tsconfig.json ./
+COPY src ./src
+COPY --from=deps /app/node_modules ./node_modules
+RUN npm run build
+
 # ── production deps: pruned runtime deps only ───────────────
 FROM base AS prod-deps
 COPY package.json pnpm-lock.yaml* package-lock.json* ./
@@ -46,8 +53,8 @@ ENV PORT=5000
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=prod-deps /app/package.json ./package.json
 
-# Copy source (no dev files, no .env — injected at runtime)
-COPY src ./src
+# Copy compiled dist (no src, no dev files, no .env — injected at runtime)
+COPY --from=builder /app/dist ./dist
 
 # Security: non-root, read-only friendly
 USER appuser
@@ -58,4 +65,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
   CMD curl -fsS http://127.0.0.1:5000/api/health || exit 1
 
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "src/server.js"]
+CMD ["node", "dist/server.js"]
