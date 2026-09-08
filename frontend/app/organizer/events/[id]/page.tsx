@@ -1,6 +1,6 @@
 "use client"
 
-import { use } from "react"
+import { Suspense, use } from "react"
 import { CalendarDays, Loader2 } from "lucide-react"
 import { RoleEventDetail } from "@/components/app/role-event-detail"
 import { useRequireRole } from "@/lib/hooks/use-require-role"
@@ -24,16 +24,18 @@ export default function OrganizerEventDetailPage({ params }: { params: Promise<{
   const role = user.role === "admin" || user.role === "org_admin" ? "Administrator" : "Organizer"
 
   return (
-    <RoleEventDetail
-      eventId={id}
-      role={role}
-      userName={user.name || "Organizer"}
-      title="Event Workspace"
-      backHref="/organizer/events"
-      backLabel="Back to my events"
-      ticketHref="/organizer/tickets"
-      registerLabel="Open workspace"
-      registerIcon={CalendarDays}
-    />
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center"><Loader2 className="size-6 animate-spin text-primary" /></div>}>
+      <RoleEventDetail
+        eventId={id}
+        role={role}
+        userName={user.name || "Organizer"}
+        title="Event Workspace"
+        backHref="/organizer/events"
+        backLabel="Back to my events"
+        ticketHref="/organizer/tickets"
+        registerLabel="Open workspace"
+        registerIcon={CalendarDays}
+      />
+    </Suspense>
   )
 }

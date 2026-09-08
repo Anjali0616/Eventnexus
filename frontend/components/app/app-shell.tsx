@@ -187,16 +187,6 @@ export function AppShell({ children, role, userName, title = "Welcome back" }: A
   const botOpen = useChatbotStore((s) => s.open)
   const setBotOpen = useChatbotStore((s) => s.setOpen)
   const aside = useRef<HTMLElement>(null)
-  // Identity from the session, not the URL (see ROLE_FOR_USER above).
-  // While auth is loading, keep showing a neutral loading state instead of
-  // flashing the prop role (e.g., Organizer flash for attendee).
-  if (isAuthLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <Loader2 className="size-6 animate-spin text-primary" />
-      </div>
-    )
-  }
   const effectiveRole: AppShellProps["role"] = currentUser
     ? ROLE_FOR_USER[currentUser.role] ?? "Attendee"
     : role
@@ -281,6 +271,14 @@ export function AppShell({ children, role, userName, title = "Welcome back" }: A
   }, [])
 
   // Placed after every hook so hook order stays stable across renders.
+  // While auth is loading, show loader instead of flashing wrong role
+  if (isAuthLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="size-6 animate-spin text-primary" />
+      </div>
+    )
+  }
   // Replaces the whole shell rather than just the body: the topbar renders
   // the page's own `title` prop, so keeping the chrome would still announce
   // "Organization approvals" to someone who may not see that console.
