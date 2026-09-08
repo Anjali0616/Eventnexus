@@ -531,17 +531,20 @@ def understand(req: UnderstandRequest):
         "You are the natural-language understanding layer for an event-management chatbot. "
         "Be very tolerant of typos, informal spelling, and missing punctuation (e.g. 'recomend', 'evnet', 'capcity', 'neer me', 'hii', 'plz'). "
         "Read the user's LATEST message together with the conversation history and reply with ONLY a single-line "
-        "JSON object — no markdown fences, no explanation — with exactly these keys:\n"
+        "JSON object — no markdown fences, no explanation, no extra keys — with exactly these keys:\n"
         f'"intent": one of {sorted(KNOWN_INTENTS)},\n'
         '"quantity": "one" if they want ONE specific event, "many" if they want a list, else null,\n'
         '"time_scope": "past" if asking about past/concluded/finished events, "upcoming" if asking about '
         "upcoming/future events, else null,\n"
         '"price_pref": "free", "paid", or null,\n'
-        '"count": an integer if they asked for a specific number of results (e.g. "10 events"), else null\n\n'
-        "Resolve short follow-ups using the history — e.g. after the bot lists upcoming events, a reply of "
-        '"just 1" means quantity="one"; "how about paid ones" means price_pref="paid" for the same time_scope '
-        "as before; 'that one', 'first', 'second', 'it' refer to the last listed events by position (1st/2nd). "
-        "Use intent 'greeting' ONLY for an actual greeting or small talk with recognizable words "
+        '"count": an integer 1-50 if they asked for a specific number of results (e.g. "10 events"), else null\n\n'
+        "CRITICAL — determinism and history:\n"
+        "- Your JSON must be valid and minimal: single line, double-quoted keys/strings, null without quotes.\n"
+        "- Resolve short follow-ups using the history — e.g. after the bot lists upcoming events, a reply of "
+        '"just 1" means quantity="one" for the SAME intent (usually upcoming_events); "how about paid ones" means price_pref="paid" for the same time_scope '
+        "as before; 'that one', 'first', 'second', 'it', '2' refer to the last listed events by position (1st/2nd). "
+        "- Never invent slots: if not mentioned and not inferable from history, use null. Never hallucinate counts or preferences.\n"
+        "- Use intent 'greeting' ONLY for an actual greeting or small talk with recognizable words "
         "('hi', 'hello', 'hey', 'thanks', 'how are you', 'what can you do') — tolerate minor typos ('hii', 'helo') as greeting too. "
         "Use intent 'create_event' for any request to "
         "CREATE, HOST, PLAN, ORGANIZE, or PUBLISH a new event ('I want to host a workshop', 'how do I create an "
@@ -564,8 +567,34 @@ def understand(req: UnderstandRequest):
         return {"intent": parsed["intent"], "slots": _normalize_slots(parsed), "source": "llm"}
 
     # LLM unavailable or returned something unusable — deterministic fallback.
+    # History-aware: short follow-ups like "just 1" or "paid ones" inherit prior context.
     classification = classify_intent(ClassifyRequest(message=text))
-    return {"intent": classification["intent"], "slots": extract_slots(text), "source": "rules"}
+    base_slots = extract_slots(text)
+    # Try to enrich slots from history when current message is a short follow-up
+    try:
+        if safe_history:
+            last_user = next((h for h in reversed(safe_history) if h.get("role") == "user"), None)
+            last_assistant = next((h for h in reversed(safe_history) if h.get("role") == "assistant"), None)
+            has_listing = last_assistant and ("|" in last_assistant.get("content","") or "There are" in last_assistant.get("content","") or "coming up" in last_assistant.get("content","").lower())
+            is_short = text.strip().lower() in ("just 1", "just one", "one", "1", "single", "first", "1st", "second", "2nd", "third", "3rd", "that one", "this one", "it") or re.match(r"^\s*(just\s+)?(one|1|single)\s*\.?\s*$", text, re.I) or re.match(r"^\s*\d{1,2}\s*$", text.strip())
+            if is_short and has_listing and last_user:
+                prev_slots = extract_slots(last_user.get("content",""))
+                # Inherit price/time if missing
+                if not base_slots.get("price_pref") and prev_slots.get("price_pref"):
+                    base_slots["price_pref"] = prev_slots["price_pref"]
+                if not base_slots.get("time_scope") and prev_slots.get("time_scope"):
+                    base_slots["time_scope"] = prev_slots["time_scope"]
+                # Bare quantifier -> quantity one
+                if not base_slots.get("quantity") and re.search(r"\b(one|1|single|first|1st|that one|this one|it)\b", text, re.I):
+                    base_slots["quantity"] = "one"
+                # If intent was fallback but history had a real intent, inherit it
+                if not classification["intent"] and last_user:
+                    prev_intent = classify_intent(ClassifyRequest(message=last_user.get("content",""))).get("intent")
+                    if prev_intent in KNOWN_INTENTS and prev_intent != "fallback":
+                        classification["intent"] = prev_intent
+    except Exception:
+        pass
+    return {"intent": classification["intent"], "slots": _normalize_slots(base_slots), "source": "rules"}
 
 
 @app.post("/generate")

@@ -26,10 +26,19 @@ export function useHasToken() {
     const onStorage = (e: StorageEvent) => {
       if (e.key === "token") check();
     };
+    const onFocus = () => check();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") check();
+    };
     window.addEventListener("storage", onStorage);
-    const interval = setInterval(check, 1000);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    // Light poll as fallback for same-tab writes without events (e.g. storeSession)
+    const interval = setInterval(check, 2000);
     return () => {
       window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
       clearInterval(interval);
     };
   }, []);
@@ -48,10 +57,18 @@ export function useHasTokenWithChecked() {
     const onStorage = (e: StorageEvent) => {
       if (e.key === "token") check();
     };
+    const onFocus = () => check();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") check();
+    };
     window.addEventListener("storage", onStorage);
-    const interval = setInterval(check, 1000);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    const interval = setInterval(check, 2000);
     return () => {
       window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
       clearInterval(interval);
     };
   }, []);

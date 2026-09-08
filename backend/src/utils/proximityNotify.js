@@ -34,6 +34,12 @@ const MAX_EMAILED = Number(process.env.NEARBY_EVENT_MAX_EMAILS) || 100;
 // Fire-and-forget from the caller — a slow or failed fan-out must never
 // block event creation or publishing.
 const notifyNearbyUsers = async (event) => {
+  // Guard: never build /event/undefined links
+  const rawEventId = event?._id ? String(event._id) : null;
+  if (!rawEventId || !/^[0-9a-fA-F]{24}$/.test(rawEventId)) {
+    console.warn("[proximity] skipped: missing or invalid event._id", { title: event?.title, rawEventId });
+    return { notified: 0, emailed: 0, reason: "missing event _id" };
+  }
   const point = event.coordinates?.geo?.coordinates;
   if (!point || point.length !== 2) {
     // Not an error: virtual events and venues without a geocode legitimately
@@ -83,6 +89,8 @@ const notifyNearbyUsers = async (event) => {
   }
 
   const message = `"${event.title}" was just published at ${event.venue}, within ${RADIUS_KM} km of you.`;
+  // Canonical singular /event/<id> — validated above so never /event/undefined
+  const link = `/event/${rawEventId}`;
   const docs = recipients.map((user) => ({
     recipient: user._id,
     organization: event.organization,
@@ -90,7 +98,7 @@ const notifyNearbyUsers = async (event) => {
     title: "New event near you",
     message,
     event: event._id,
-    link: `/event/${event._id}`,
+    link,
   }));
 
   // insertMany returns the created docs, so the socket payload below carries

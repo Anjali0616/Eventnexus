@@ -112,7 +112,15 @@ async function dispatchDueJobs() {
       message = `We'd love your feedback on ${event.title}. It only takes a minute — share your thoughts!`;
     }
 
-    // Create in-app notification (always).
+    // Guard: never create /event/undefined — validate event id before using it for link/event field.
+    const rawEventId = event?._id ? String(event._id) : null;
+    const validEventId = rawEventId && /^[0-9a-fA-F]{24}$/.test(rawEventId) ? rawEventId : null;
+    if (!validEventId) {
+      console.warn("[reminder] skipping notification with invalid event id", { jobId: job._id, rawEventId });
+      await ReminderJob.updateOne({ _id: job._id }, { sentAt: new Date(), metadata: { error: "invalid event id", title, kind: job.kind } });
+      continue;
+    }
+    // Create in-app notification (always). Canonical singular /event/<id>.
     const notification = await Notification.create({
       recipient: recipient._id,
       organization: job.organization,
@@ -120,7 +128,7 @@ async function dispatchDueJobs() {
       title,
       message,
       event: event._id,
-      link: `/event/${event._id}`,
+      link: `/event/${validEventId}`,
     });
 
     // Push it live — reminders land as a toast even if the app is open.

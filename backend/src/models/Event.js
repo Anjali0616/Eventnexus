@@ -168,6 +168,8 @@ eventSchema.index({ category: 1, status: 1 });
 eventSchema.index({ title: "text" });
 eventSchema.index({ organization: 1, status: 1, date: 1 });
 eventSchema.index({ organization: 1, "coHostOrganizations": 1 });
+eventSchema.index({ coHostOrganizations: 1, status: 1, date: 1 });
+eventSchema.index({ organization: 1, "price.amount": 1, status: 1, date: 1 });
 
 eventSchema.pre("save", function (next) {
   if (this.isModified("coordinates") && this.coordinates?.lat != null && this.coordinates?.lng != null) {

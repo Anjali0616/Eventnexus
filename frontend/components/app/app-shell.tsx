@@ -25,6 +25,9 @@ const EventBot = dynamic(() => import("@/components/chatbot/event-bot").then((m)
 const LocationPromptDynamic = dynamic(() => import("@/components/app/location-prompt").then((m) => m.LocationPrompt), {
   ssr: false,
 })
+const InterestsPromptDynamic = dynamic(() => import("@/components/interests/first-login-interests-dialog").then((m) => m.FirstLoginInterestsDialog), {
+  ssr: false,
+})
 import { useUnreadCount } from "@/lib/queries/notifications"
 import { useCurrentUser, useLogout } from "@/lib/queries/auth"
 import { useHasTokenWithChecked } from "@/lib/hooks/use-has-token"
@@ -449,6 +452,7 @@ export function AppShell({ children, role, userName, title = "Welcome back" }: A
       {/* Asks for location once, after the post-login redirect has settled —
           see the component for why it can't live on the login page. */}
       {!blocked && <LocationPromptDynamic />}
+      {!blocked && <InterestsPromptDynamic />}
 
       <HelpDialog
         open={helpOpen}

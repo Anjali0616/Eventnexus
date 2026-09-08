@@ -108,7 +108,7 @@ const createCheckoutSession = async (req, res) => {
           expectedCurrency: chargeCurrency,
         },
         success_url: `${FRONTEND_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${FRONTEND_URL}/events/${event._id}?checkout=cancelled`,
+        cancel_url: `${FRONTEND_URL}/event/${event._id}?checkout=cancelled`,
         client_reference_id: req.user._id.toString(),
       },
       { idempotencyKey }

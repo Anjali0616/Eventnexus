@@ -72,6 +72,26 @@ router.post(
       .trim()
       .notEmpty()
       .withMessage("Organization name cannot be empty"),
+    body("interests")
+      .optional()
+      .isArray({ max: 10 })
+      .withMessage("interests must be an array (max 10)"),
+    body("interests.*")
+      .optional()
+      .isString()
+      .isIn([
+        "Technology",
+        "Business",
+        "Academic",
+        "Workshop",
+        "Social",
+        "Health",
+        "Arts",
+        "Music",
+        "Sports",
+        "Networking",
+      ])
+      .withMessage("Invalid interest category"),
   ],
   validate,
   register

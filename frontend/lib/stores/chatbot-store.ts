@@ -127,12 +127,13 @@ interface ChatbotState {
   pushBotMessage: (text: string) => void
 }
 
+const _initialConv = newConversation()
 export const useChatbotStore = create<ChatbotState>()(
   persist(
     (set, get) => ({
       open: false,
-      conversations: [newConversation()],
-      activeId: "",
+      conversations: [_initialConv],
+      activeId: _initialConv.id,
       input: "",
       typing: false,
       suggestions: [],
@@ -171,9 +172,8 @@ export const useChatbotStore = create<ChatbotState>()(
       clearActiveConversation: () => {
         const fresh = newConversation()
         set((s) => ({
-          conversations: s.conversations.map((c) =>
-            c.id === s.activeId ? fresh : c
-          ),
+          conversations: s.conversations.map((c) => (c.id === s.activeId ? fresh : c)),
+          activeId: fresh.id,
           input: "",
         }))
       },

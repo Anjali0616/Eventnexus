@@ -81,6 +81,26 @@ const userSchema = new mongoose.Schema(
     // Defaults to true so attendees get reminders out of the box; can be toggled
     // in Settings → Notifications.
     reminderEmail: { type: Boolean, default: true },
+    // Explicit interests chosen by the attendee (category pills on
+    // registration + editable in Settings). Powers personalized
+    // recommendations — the engine boosts these categories heavily.
+    interests: [
+      {
+        type: String,
+        enum: [
+          "Technology",
+          "Business",
+          "Academic",
+          "Workshop",
+          "Social",
+          "Health",
+          "Arts",
+          "Music",
+          "Sports",
+          "Networking",
+        ],
+      },
+    ],
     // Events the user bookmarked (the heart on event cards / detail pages).
     // Server-side so saved lists follow the account across devices instead
     // of living only in one browser's localStorage. Guests keep the

@@ -15,6 +15,52 @@ const {
   paginate,
 } = require("../utils/query");
 
+// Update the current user's explicit interests (category pills).
+// Validated against the same allowlist as registration; empty array clears.
+const ALLOWED_INTERESTS = [
+  "Technology",
+  "Business",
+  "Academic",
+  "Workshop",
+  "Social",
+  "Health",
+  "Arts",
+  "Music",
+  "Sports",
+  "Networking",
+];
+
+const sanitizeInterests = (arr) => {
+  if (!Array.isArray(arr)) return null;
+  const seen = new Set();
+  const out = [];
+  for (const raw of arr) {
+    const v = String(raw || "").trim();
+    if (ALLOWED_INTERESTS.includes(v) && !seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+    if (out.length >= 10) break;
+  }
+  return out;
+};
+
+const updateMyInterests = async (req, res) => {
+  try {
+    const { interests } = req.body;
+    const cleaned = sanitizeInterests(interests);
+    if (cleaned === null) {
+      return res.status(400).json({ message: "interests must be an array of categories" });
+    }
+    req.user.interests = cleaned;
+    await req.user.save();
+    res.json({ interests: req.user.interests });
+  } catch (error) {
+    console.error("[error]", error);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again.", code: "INTERNAL_ERROR" });
+  }
+};
+
 const EMAIL_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h, matches auth resets
 
 // Resolve a user the calling admin may manage. The OVERALL system admin
@@ -354,16 +400,29 @@ const updateMyLocation = async (req, res) => {
 // Any authenticated user (attendee, organizer, admin) can update their own
 // display name from Settings. Email stays immutable — it's the account's
 // identity (and Google accounts have no password to verify a change with).
+// Also accepts optional interests array so PATCH /me/profile can save
+// interests together with a name change from the same form.
 const updateMyProfile = async (req, res) => {
   try {
-    const { name } = req.body;
-    if (!name || !name.trim()) {
+    const { name, interests } = req.body;
+    if (name !== undefined) {
+      if (!name || !String(name).trim()) {
+        return res.status(400).json({ message: "Name is required" });
+      }
+      if (String(name).trim().length > 80) {
+        return res.status(400).json({ message: "Name is too long (max 80 characters)" });
+      }
+      req.user.name = String(name).trim();
+    } else if (interests === undefined) {
       return res.status(400).json({ message: "Name is required" });
     }
-    if (name.trim().length > 80) {
-      return res.status(400).json({ message: "Name is too long (max 80 characters)" });
+    if (interests !== undefined) {
+      const cleaned = sanitizeInterests(interests);
+      if (cleaned === null) {
+        return res.status(400).json({ message: "interests must be an array of categories" });
+      }
+      req.user.interests = cleaned;
     }
-    req.user.name = name.trim();
     await req.user.save();
     res.json({
       user: {
@@ -373,6 +432,7 @@ const updateMyProfile = async (req, res) => {
         role: req.user.role,
         organization: req.user.organization,
         location: req.user.location,
+        interests: req.user.interests || [],
       },
     });
   } catch (error) {
@@ -765,6 +825,7 @@ module.exports = {
   updateMyLocation,
   updateMyProfile,
   updateMyPassword,
+  updateMyInterests,
   updateReminderPreference,
   getMySavedEvents,
   addSavedEvent,

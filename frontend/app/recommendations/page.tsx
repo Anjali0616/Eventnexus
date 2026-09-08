@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import Link from "next/link"
 import {
   Calendar,
@@ -208,6 +209,7 @@ function RecommendationCard({
 }
 
 export default function AttendeeRecommendationsPage() {
+  const router = useRouter()
   const { data: userData } = useCurrentUser()
   const [category, setCategory] = useState("all")
   const [search, setSearch] = useState("")
@@ -239,6 +241,16 @@ export default function AttendeeRecommendationsPage() {
 
   const handleRegister = (eventId: string) => {
     if (registeredEventIds.has(eventId) || registerMutation.isPending) return
+    // Paid events must go through checkout (eSewa/Stripe) — the direct register
+    // endpoint 400s with "requires payment". Redirect to detail for rail choice.
+    const rec = recommendations.find((r) => r.event._id === eventId)
+    if (rec && !isFreeEvent(rec.event.price)) {
+      router.push(`/event/${eventId}`)
+      return
+    }
+    // Past / full events are disabled at the card level but guard here too
+    if (rec && new Date(rec.event.date).getTime() <= Date.now()) return
+    if (rec && rec.event.registered >= rec.event.capacity) return
     registerMutation.mutate(eventId)
   }
 

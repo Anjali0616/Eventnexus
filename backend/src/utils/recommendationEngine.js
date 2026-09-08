@@ -16,9 +16,16 @@
 
 const Event = require("../models/Event");
 const Ticket = require("../models/Ticket");
+const User = require("../models/User");
 const { haversineKm, hasValidCoords } = require("./geo");
 const predictAttendance = require("./predictAttendance");
 const ai = require("./aiClient");
+
+// Explicit-interest boost — large enough to dominate cold-start ranking.
+// An event whose category is in the user's chosen interests outranks
+// history-derived categories, proximity, and popularity combined, making
+// the first-login experience feel immediately personalized.
+const EXPLICIT_INTEREST_BOOST = 28;
 
 const proximityScore = (distanceKm) => {
   if (distanceKm == null) return 0;
@@ -35,9 +42,14 @@ const proximityScore = (distanceKm) => {
 // Compact human-readable factor list per candidate; feeds both the
 // deterministic fallback reason and the LLM explainer (which must not
 // invent anything beyond these).
-const describeFactors = ({ fillRate, velocityScore, proximity, recencyScore, categoryMatched, typeMatched, comboMatched }) => {
+const describeFactors = ({ fillRate, velocityScore, proximity, recencyScore, categoryMatched, typeMatched, comboMatched, explicitInterestMatched }) => {
   const factors = [];
-  if (categoryMatched) factors.push("matches your interests");
+  if (explicitInterestMatched) factors.push("matches your selected interests");
+  else if (categoryMatched) factors.push("matches your interests");
+  // When both explicit and history match, surface both signals so the
+  // explainer can say "selected interests + past attendance" rather than
+  // collapsing them into one generic line.
+  if (explicitInterestMatched && categoryMatched) factors.push("based on your past attendance");
   if (typeMatched) factors.push(`prefers ${typeMatched} events`);
   if (comboMatched) factors.push("same category + format as events you attended");
   if (recencyScore > 0) factors.push("recent interest in this category");
@@ -93,8 +105,10 @@ const scoreDeterministic = async ({
   typeWeights,
   categoryLastSeen,
   registeredEventIds,
+  userInterests = [],
 }) => {
   const hasUserLoc = hasValidCoords(location);
+  const interestSet = new Set(userInterests || []);
 
   const scored = candidates
     .filter((event) => !registeredEventIds.has(event._id.toString()))
@@ -110,6 +124,9 @@ const scoreDeterministic = async ({
       const typeScore = (typeWeights[event.type] || 0) * 4;
       const comboKey = `${event.category}|${event.type}`;
       const comboScore = (interestWeights[comboKey] || 0) * 6;
+
+      const explicitInterestMatched = interestSet.has(event.category);
+      const explicitInterestScore = explicitInterestMatched ? EXPLICIT_INTEREST_BOOST : 0;
 
       const daysSinceCreated = Math.max(1, (Date.now() - new Date(event.createdAt).getTime()) / (1000 * 60 * 60 * 24));
       const registrationVelocity = event.registered / daysSinceCreated;
@@ -137,7 +154,7 @@ const scoreDeterministic = async ({
       }
 
       const score = Math.round(
-        (catScore + typeScore + comboScore + velocityScore + demandPressure + popularityScore + proximity + recencyScore) * 10
+        (catScore + typeScore + comboScore + velocityScore + demandPressure + popularityScore + proximity + recencyScore + explicitInterestScore) * 10
       ) / 10;
 
       return {
@@ -153,6 +170,7 @@ const scoreDeterministic = async ({
           categoryMatched: catScore >= 8,
           typeMatched: typeScore >= 4 ? event.type : null,
           comboMatched: comboScore >= 6,
+          explicitInterestMatched,
         }),
       };
     })
@@ -164,9 +182,12 @@ const scoreDeterministic = async ({
 
 // CF-first path: Python service ranked by collaborative filtering. We rehydrate
 // the event documents, attach deterministic context (distance, predicted) and
-// factor strings so the reason layer works identically.
-const buildFromCf = async ({ candidates, cf, location, limit, registeredEventIds }) => {
+// factor strings so the reason layer works identically. Explicit interests
+// re-rank the CF output — the Python model knows only past tickets, so a
+// fresh interest selection (cold start) would otherwise be invisible here.
+const buildFromCf = async ({ candidates, cf, location, limit, registeredEventIds, userInterests = [] }) => {
   const hasUserLoc = hasValidCoords(location);
+  const interestSet = new Set(userInterests || []);
   const byId = new Map(candidates.map((e) => [e._id.toString(), e]));
   const entries = [];
   for (const r of cf.recommendations) {
@@ -181,37 +202,45 @@ const buildFromCf = async ({ candidates, cf, location, limit, registeredEventIds
     // recommend an event the user just registered for.
     if (registeredEventIds.has(String(event._id))) continue;
     entries.push({ event, cfScore: r.score });
-    if (entries.length >= limit) break;
+    if (entries.length >= limit * 2) break; // over-fetch to allow interest re-rank to surface lower-CF hits
   }
   if (!entries.length) return null;
 
   const predictions = await predictAttendance.batch(entries.map((e) => e.event));
 
+  const scored = entries.map(({ event, cfScore }, i) => {
+    const explicitInterestMatched = interestSet.has(event.category);
+    const boost = explicitInterestMatched ? EXPLICIT_INTEREST_BOOST : 0;
+    const fillRate = event.capacity > 0 ? event.registered / event.capacity : 0;
+    const daysSinceCreated = Math.max(1, (Date.now() - new Date(event.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+    const velocityScore = Math.min((event.registered / daysSinceCreated) * 3, 10);
+    const distanceKm =
+      hasUserLoc && hasValidCoords(event.coordinates)
+        ? Math.round(haversineKm(location, event.coordinates) * 10) / 10
+        : null;
+    const proximity = proximityScore(distanceKm);
+    return {
+      event,
+      score: Math.round((cfScore * 100 + boost) * 10) / 10,
+      distanceKm,
+      predicted: predictions[i],
+      factors: describeFactors({ fillRate, velocityScore, proximity, recencyScore: 0, explicitInterestMatched }),
+      _cfScore: cfScore,
+    };
+  }).sort((a, b) => b.score - a.score).slice(0, limit);
+
+  // If none of the CF candidates match the user's explicit interests,
+  // fall back to deterministic with interest boost — CF alone would hide
+  // interest-matching events that the model hasn't learned yet.
   return {
-    scored: entries.map(({ event, cfScore }, i) => {
-      const fillRate = event.capacity > 0 ? event.registered / event.capacity : 0;
-      const daysSinceCreated = Math.max(1, (Date.now() - new Date(event.createdAt).getTime()) / (1000 * 60 * 60 * 24));
-      const velocityScore = Math.min((event.registered / daysSinceCreated) * 3, 10);
-      const distanceKm =
-        hasUserLoc && hasValidCoords(event.coordinates)
-          ? Math.round(haversineKm(location, event.coordinates) * 10) / 10
-          : null;
-      const proximity = proximityScore(distanceKm);
-      return {
-        event,
-        score: Math.round(cfScore * 1000) / 10,
-        distanceKm,
-        predicted: predictions[i],
-        factors: describeFactors({ fillRate, velocityScore, proximity, recencyScore: 0 }),
-      };
-    }),
+    scored,
     hasLocation: hasUserLoc,
   };
 };
 
-const scoreEvents = async ({ attendee, organization, location, limit = 12, withReasons = false }) => {
-  const [myTickets, candidates] = await Promise.all([
-    Ticket.find({ attendee }).populate("event").sort({ createdAt: -1 }),
+const scoreEvents = async ({ attendee, organization, location, limit = 12, withReasons = false, userInterests }) => {
+  const [myTickets, candidates, userDoc] = await Promise.all([
+    Ticket.find({ attendee }).populate("event").sort({ createdAt: -1 }).lean(),
     // Not scoped to `organization` — the public Discover page shows every
     // non-draft event across every organization, and recommendations should
     // draw from that same cross-org pool, not just events owned by whatever
@@ -221,8 +250,14 @@ const scoreEvents = async ({ attendee, organization, location, limit = 12, withR
     Event.find({
       status: { $in: ["Upcoming", "Live"] },
       $or: [{ status: "Live" }, { date: { $gte: new Date() } }],
-    }).populate("organizer", "name"),
+    }).populate("organizer", "name").lean(),
+    userInterests !== undefined
+      ? null
+      : User.findById(attendee).select("interests").lean(),
   ]);
+  const resolvedInterests = userInterests !== undefined
+    ? userInterests
+    : (userDoc?.interests || []);
 
   const registeredEventIds = new Set(
     myTickets.filter((t) => t.event).map((t) => t.event._id.toString())
@@ -231,10 +266,10 @@ const scoreEvents = async ({ attendee, organization, location, limit = 12, withR
   // Tier 1: collaborative filtering from the Python AI service.
   const cf = await ai.recommend(attendee, organization);
   if (cf?.has_cf && cf.recommendations.length) {
-    const fromCf = await buildFromCf({ candidates, cf, location, limit, registeredEventIds });
+    const fromCf = await buildFromCf({ candidates, cf, location, limit, registeredEventIds, userInterests: resolvedInterests });
     if (fromCf) {
       if (withReasons) await addAiReasons(fromCf.scored);
-      return { ...fromCf, recommendations: fromCf.scored };
+      return { ...fromCf, recommendations: fromCf.scored, interests: resolvedInterests };
     }
   }
 
@@ -269,6 +304,7 @@ const scoreEvents = async ({ attendee, organization, location, limit = 12, withR
     typeWeights,
     categoryLastSeen,
     registeredEventIds,
+    userInterests: resolvedInterests,
   });
 
   // Replace heuristic forecasts with the trained model's when available.
@@ -277,7 +313,7 @@ const scoreEvents = async ({ attendee, organization, location, limit = 12, withR
 
   if (withReasons) await addAiReasons(scored);
 
-  return { scored, hasLocation, recommendations: scored };
+  return { scored, hasLocation, recommendations: scored, interests: resolvedInterests };
 };
 
 module.exports = { scoreEvents, proximityScore };

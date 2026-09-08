@@ -149,36 +149,67 @@ export function NotificationDetail({ basePath }: { basePath: string }) {
             })}
           </p>
 
-          {event && (
-            <Link
-              href={`/event/${event._id}`}
-              className="flex items-center gap-4 rounded-xl border border-border bg-background p-4 transition-colors hover:border-primary/40"
-            >
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-                <CalendarDays className="size-5 text-primary" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold text-ink">{event.title}</span>
-                <span className="block text-xs text-muted-foreground">
-                  {new Date(event.date).toLocaleDateString(undefined, {
-                    weekday: "short",
-                    month: "short",
-                    day: "numeric",
-                  })}
-                </span>
-              </span>
-              <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary">
-                View event <ExternalLink className="size-3.5" />
-              </span>
-            </Link>
-          )}
-
-          {notice.link && (() => {
-            const safe = /^\/[a-z0-9/_\-?=&]+$/i.test(notice.link) && !notice.link.startsWith("//") && !/^(javascript|data|vbscript):/i.test(notice.link)
-            const href = safe ? notice.link : basePath
+          {(() => {
+            const raw = event as unknown
+            const rawId =
+              raw && typeof raw === "object" && "_id" in (raw as Record<string, unknown>)
+                ? String((raw as { _id?: unknown })._id || "")
+                : typeof raw === "string"
+                  ? String(raw)
+                  : ""
+            // Guard: never build /event/undefined — require valid 24-hex ObjectId
+            const eventId = rawId && /^[0-9a-fA-F]{24}$/.test(rawId) ? rawId : null
+            if (!eventId) return null
+            const title =
+              raw && typeof raw === "object" ? ((raw as { title?: string }).title || "Event") : "Event"
+            const rawDate = raw && typeof raw === "object" ? (raw as { date?: string }).date : null
+            const d = rawDate ? new Date(rawDate as string) : null
+            const valid = d instanceof Date && !Number.isNaN(d.getTime())
             return (
               <Link
-                href={href}
+                href={`/event/${eventId}`}
+                className="flex items-center gap-4 rounded-xl border border-border bg-background p-4 transition-colors hover:border-primary/40"
+              >
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+                  <CalendarDays className="size-5 text-primary" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-ink">{title}</span>
+                  {valid ? (
+                    <span className="block text-xs text-muted-foreground">
+                      {d!.toLocaleDateString(undefined, {
+                        weekday: "short",
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </span>
+                  ) : (
+                    <span className="block text-xs text-muted-foreground">Date not available</span>
+                  )}
+                </span>
+                <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary">
+                  View event <ExternalLink className="size-3.5" />
+                </span>
+              </Link>
+            )
+          })()}
+
+          {(() => {
+            let rawLink = notice.link ? String(notice.link).trim() : ""
+            if (!rawLink || rawLink.includes("undefined") || rawLink.includes("null")) return null
+            // Normalize legacy plural /events/<id> to canonical singular /event/<id>
+            if (rawLink.startsWith("/events/")) rawLink = rawLink.replace(/^\/events\//, "/event/")
+            if (rawLink === "/event" || rawLink === "/event/" || rawLink === "/events" || rawLink === "/events/") return null
+            // If it's an event link, validate the id portion
+            if (rawLink.startsWith("/event/")) {
+              const idPart = rawLink.split("/")[2]?.split("?")[0]?.split("#")[0] || ""
+              if (!idPart || !/^[0-9a-fA-F]{24}$/.test(idPart)) return null
+            }
+            const safe = /^\/[a-z0-9/_\-?=&]+$/i.test(rawLink) && !rawLink.startsWith("//") && !/^(javascript|data|vbscript):/i.test(rawLink)
+            if (!safe) return null
+            return (
+              <Link
+                href={rawLink}
                 className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-[0_8px_20px_-10px_rgba(91,76,245,0.8)] transition-transform hover:-translate-y-0.5"
               >
                 <ExternalLink className="size-4" /> Open related page

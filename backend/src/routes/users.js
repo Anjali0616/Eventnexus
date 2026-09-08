@@ -13,6 +13,7 @@ const {
   updateMyLocation,
   updateMyProfile,
   updateMyPassword,
+  updateMyInterests,
   updateReminderPreference,
   getMySavedEvents,
   addSavedEvent,
@@ -44,9 +45,53 @@ router.patch(
 router.patch(
   "/me/profile",
   protect,
-  [body("name").notEmpty().withMessage("Name is required")],
+  [
+    body("name").optional().isString().trim().notEmpty().withMessage("Name is required"),
+    body("interests").optional().isArray({ max: 10 }).withMessage("interests must be an array (max 10)"),
+    body("interests.*")
+      .optional()
+      .isString()
+      .isIn([
+        "Technology",
+        "Business",
+        "Academic",
+        "Workshop",
+        "Social",
+        "Health",
+        "Arts",
+        "Music",
+        "Sports",
+        "Networking",
+      ])
+      .withMessage("Invalid interest category"),
+  ],
   validate,
   updateMyProfile
+);
+
+router.patch(
+  "/me/interests",
+  protect,
+  [
+    body("interests").isArray({ max: 10 }).withMessage("interests must be an array (max 10)"),
+    body("interests.*")
+      .isString()
+      .isIn([
+        "Technology",
+        "Business",
+        "Academic",
+        "Workshop",
+        "Social",
+        "Health",
+        "Arts",
+        "Music",
+        "Sports",
+        "Networking",
+      ])
+      .withMessage("Invalid interest category"),
+  ],
+  validate,
+  updateMyInterests
 );
 
 router.patch(

@@ -3,13 +3,14 @@
 import { Suspense, useEffect, useState } from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
-import { Building2, Loader2, MailCheck, Ticket, UserRound } from "lucide-react"
+import { Building2, Loader2, MailCheck, Sparkles, Ticket, UserRound } from "lucide-react"
 import { AuthShell } from "@/components/auth/auth-shell"
 import { useCurrentUser, useRegister, useLogout, roleRoutes } from "@/lib/queries/auth"
 import { useOrganizations } from "@/lib/queries/organizations"
 import { useOrgRegister } from "@/lib/queries/system"
 import { useEvent } from "@/lib/queries/events"
 import { sanitizeEventRedirect } from "@/lib/event-redirect"
+import { InterestsSelector } from "@/components/interests/interests-selector"
 
 // Mirrors the same banner on the login page: shown when this signup was
 // reached via PublicEventLanding's Join button (a signed-out QR/link scan),
@@ -62,6 +63,7 @@ function RegisterPageInner() {
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [organizationId, setOrganizationId] = useState("")
+  const [selectedInterests, setSelectedInterests] = useState<string[]>([])
 
   // --- Organization registration ---------------------------------------------
   const [form, setForm] = useState({
@@ -103,7 +105,7 @@ function RegisterPageInner() {
   const handleAttendeeSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (password !== confirmPassword) return
-    registerMutation.mutate({ name, email, password, role: "attendee" })
+    registerMutation.mutate({ name, email, password, role: "attendee", interests: selectedInterests })
   }
 
   const handleOrgSubmit = (e: React.FormEvent) => {
@@ -234,6 +236,26 @@ function RegisterPageInner() {
           <div className="grid grid-cols-2 gap-4">
             <Field label="Password" type="password" placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} />
             <Field label="Confirm Password" type="password" placeholder="••••••••" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
+          </div>
+
+          <div className="auth-field rounded-2xl border border-border bg-muted/20 p-4">
+            <div className="flex items-center gap-2">
+              <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10">
+                <Sparkles className="size-4 text-primary" />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-ink">What are you into?</p>
+                <p className="text-xs text-muted-foreground">Pick categories you love — we&apos;ll personalize recommendations.</p>
+              </div>
+            </div>
+            <div className="mt-3">
+              <InterestsSelector value={selectedInterests} onChange={setSelectedInterests} size="compact" />
+            </div>
+            {selectedInterests.length > 0 && (
+              <p className="mt-2 text-xs font-medium text-primary">
+                {selectedInterests.length} interest{selectedInterests.length === 1 ? "" : "s"} selected — your feed will be tuned from day one.
+              </p>
+            )}
           </div>
 
           <button

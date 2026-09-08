@@ -166,4 +166,9 @@ export const usersApi = {
     const res = await apiClient.patch("/users/me/reminders", { reminderEmail });
     return res.data;
   },
+
+  updateMyInterests: async (interests: string[]): Promise<{ interests: string[] }> => {
+    const res = await apiClient.patch("/users/me/interests", { interests });
+    return res.data;
+  },
 };

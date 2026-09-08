@@ -190,3 +190,25 @@ export function useUpdateReminderPreference() {
     onError: (error: unknown) => toast.error(getErrorMessage(error)),
   });
 }
+
+export function useUpdateMyInterests() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (interests: string[]) => usersApi.updateMyInterests(interests),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["auth", "me"], (old: any) =>
+        old ? { ...old, user: { ...old.user, interests: data.interests } } : old
+      );
+      const stored = localStorage.getItem("user");
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          localStorage.setItem("user", JSON.stringify({ ...parsed, interests: data.interests }));
+        } catch {}
+      }
+      queryClient.invalidateQueries({ queryKey: ["recommendations"] });
+      toast.success("Interests updated — recommendations refreshed.");
+    },
+    onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed to update interests.")),
+  });
+}

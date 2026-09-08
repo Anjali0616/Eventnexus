@@ -12,6 +12,7 @@ export interface User {
     city?: string;
     updatedAt?: string;
   };
+  interests?: string[];
   // True for accounts created via Google sign-in — no password to change.
   googleAccount?: boolean;
   // True once the email address has been confirmed (report §7).
@@ -43,6 +44,7 @@ export interface RegisterPayload {
   // Admin sign-up creates a new tenant; organizer/attendee sign-up joins one.
   organizationName?: string;
   organizationId?: string;
+  interests?: string[];
 }
 
 export interface LoginPayload {

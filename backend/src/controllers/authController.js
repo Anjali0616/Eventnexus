@@ -62,6 +62,34 @@ const assignDefaultOrg = async (user) => {
   user.organization = org._id;
 };
 
+const ALLOWED_INTERESTS = [
+  "Technology",
+  "Business",
+  "Academic",
+  "Workshop",
+  "Social",
+  "Health",
+  "Arts",
+  "Music",
+  "Sports",
+  "Networking",
+];
+
+const sanitizeInterests = (arr) => {
+  if (!Array.isArray(arr)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const raw of arr) {
+    const v = String(raw || "").trim();
+    if (ALLOWED_INTERESTS.includes(v) && !seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+    if (out.length >= 10) break;
+  }
+  return out;
+};
+
 const serializeUser = (user) => ({
   _id: user._id,
   name: user.name,
@@ -69,6 +97,7 @@ const serializeUser = (user) => ({
   role: user.role,
   organization: user.organization,
   location: user.location,
+  interests: Array.isArray(user.interests) ? user.interests : [],
   // True when the account was created via Google sign-in — such accounts
   // have no password, so the UI hides the "change password" card.
   googleAccount: Boolean(user.googleId),
@@ -152,7 +181,7 @@ const sendVerificationEmail = async (user) => {
 
 const register = async (req, res) => {
   try {
-    const { name, email, password, role, organizationId, organizationName } =
+    const { name, email, password, role, organizationId, organizationName, interests } =
       req.body;
 
     // Public self-service registration is attendee-only. Organizer/admin
@@ -233,12 +262,14 @@ const register = async (req, res) => {
     // platform-wide "admin" role's ADMIN_EMAILS allowlist grant sticky
     // (see googleLogin below). This path only ever creates org_admin,
     // organizer, or attendee accounts, never the system admin.
+    const interestsClean = sanitizeInterests(interests);
     const user = await User.create({
       name,
       email,
       password,
       role: resolvedRole,
       organization: organization ? organization._id : null,
+      ...(interestsClean.length ? { interests: interestsClean } : {}),
     });
 
     // For org_admin self-registration, fix the placeholder owner now that user exists.
@@ -944,6 +975,7 @@ const exportMyData = async (req, res) => {
         role: user.role,
         organization: user.organization,
         location: user.location,
+        interests: user.interests || [],
         emailVerifiedAt: user.emailVerifiedAt,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
@@ -1025,6 +1057,7 @@ const deleteMyAccount = async (req, res) => {
     user.passwordResetToken = undefined;
     user.passwordResetExpiresAt = undefined;
     user.location = undefined;
+    user.interests = [];
     user.reminderEmail = false;
     user.organization = null;
     await user.save();

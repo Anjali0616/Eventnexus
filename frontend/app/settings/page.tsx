@@ -1,12 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { AppShell } from "@/components/app/app-shell"
 import { Reveal } from "@/components/anim/reveal"
 import { useCurrentUser, useLogout, useSessions, useRevokeSession, useExportMyData, useDeleteMyAccount } from "@/lib/queries/auth"
 import { useSaveLocationCoords } from "@/lib/queries/location"
-import { useUpdateMyPassword, useUpdateMyProfile, useUpdateReminderPreference } from "@/lib/queries/users"
+import { useUpdateMyPassword, useUpdateMyProfile, useUpdateReminderPreference, useUpdateMyInterests } from "@/lib/queries/users"
 import { captureAndSaveLocation, getBrowserLocation } from "@/lib/api/location"
+import { InterestsSelector } from "@/components/interests/interests-selector"
 import {
   MapPin,
   Navigation,
@@ -27,6 +28,8 @@ import {
   Bell,
   BellOff,
   Download,
+  Sparkles,
+  Heart,
 } from "lucide-react"
 
 const roleToShell = (role?: string) =>
@@ -42,6 +45,7 @@ export default function AttendeeSettingsPage() {
   const updateProfile = useUpdateMyProfile()
   const updatePassword = useUpdateMyPassword()
   const updateReminderPref = useUpdateReminderPreference()
+  const updateInterests = useUpdateMyInterests()
   const logout = useLogout()
   const exportData = useExportMyData()
   const deleteAccount = useDeleteMyAccount()
@@ -69,6 +73,9 @@ export default function AttendeeSettingsPage() {
   const [reminderStatus, setReminderStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteEmail, setDeleteEmail] = useState("")
+
+  const [editInterests, setEditInterests] = useState<string[]>(user?.interests || [])
+  const [interestsStatus, setInterestsStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
 
   const hasLocation = user?.location?.lat != null
 
@@ -194,6 +201,29 @@ export default function AttendeeSettingsPage() {
         setTimeout(() => setReminderStatus("idle"), 2000)
         console.error("Failed to update reminder preference:", err)
       },
+    })
+  }
+
+  useEffect(() => {
+    if (user?.interests) setEditInterests(user.interests)
+    if (user?.name) setEditName(user.name)
+    if (user?.reminderEmail !== undefined) setReminderEmail(user.reminderEmail)
+    if (user?.location?.lat != null) {
+      setManualLat(user.location.lat.toString())
+      setManualLng(user.location.lng.toString())
+      setManualCity(user.location.city || "")
+    }
+  }, [user?.interests, user?.name, user?.reminderEmail, user?.location?.lat, user?.location?.lng, user?.location?.city])
+
+  const handleSaveInterests = () => {
+    setInterestsStatus("saving")
+    updateInterests.mutate(editInterests, {
+      onSuccess: () => {
+        setInterestsStatus("saved")
+        refetchUser()
+        setTimeout(() => setInterestsStatus("idle"), 2000)
+      },
+      onError: () => setInterestsStatus("error"),
     })
   }
 
@@ -368,6 +398,71 @@ export default function AttendeeSettingsPage() {
               {saveStatus === "error" && (
                 <p className="text-xs text-amber-600">
                   Invalid coordinates. Latitude must be between -90 and 90, longitude between -180 and 180.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-card p-6">
+            <div className="flex items-center gap-3">
+              <span className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+                <Heart className="size-5 text-primary" />
+              </span>
+              <div>
+                <h2 className="font-display text-base font-bold text-ink">Interests</h2>
+                <p className="text-xs text-muted-foreground">
+                  Choose categories you love — recommendations are tuned to these first.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <InterestsSelector
+                value={editInterests}
+                onChange={setEditInterests}
+                disabled={interestsStatus === "saving"}
+              />
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSaveInterests}
+                  disabled={
+                    interestsStatus === "saving" ||
+                    JSON.stringify([...editInterests].sort()) === JSON.stringify([...(user?.interests || [])].sort())
+                  }
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-transform hover:-translate-y-0.5 disabled:opacity-60"
+                >
+                  {interestsStatus === "saving" ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : interestsStatus === "saved" ? (
+                    <>
+                      <Check className="size-4" /> Saved
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="size-4" /> Save interests
+                    </>
+                  )}
+                </button>
+                {editInterests.length > 0 && (
+                  <button
+                    onClick={() => setEditInterests([])}
+                    className="rounded-xl border border-border px-4 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-ink"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {interestsStatus === "error" && (
+                <p className="text-xs text-amber-600">Couldn&apos;t save interests. Try again.</p>
+              )}
+              {interestsStatus === "saved" && (
+                <p className="text-xs text-emerald-600">Your recommendations will now prioritize {editInterests.join(", ")}.</p>
+              )}
+              {editInterests.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No interests selected — you&apos;ll see general trending events. Pick a few to personalize your feed.
                 </p>
               )}
             </div>

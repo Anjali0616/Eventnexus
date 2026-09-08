@@ -67,19 +67,66 @@ def extract_time_scope(message: str) -> str | None:
 
 
 def extract_price_preference(message: str) -> str | None:
-    if _FREE_RE.search(message):
+    """Mirrors backend's pricePreference exactly — including negation handling.
+
+    Without this, 'not free' or 'no free events' would incorrectly return 'free',
+    and 'free or paid' (ambiguous) must return null to trigger clarification
+    rather than guessing. Precision requires identical logic in both languages.
+    """
+    m = message.lower()
+    has_free = bool(_FREE_RE.search(message))
+    has_paid = bool(_PAID_RE.search(message))
+    has_neg_free = bool(re.search(r"\b(not|no|don't|dont|without|except|exclude|only)\b[^.]{0,12}\bfree\b", m, re.I) or re.search(r"\bfree\b[^.]{0,12}\b(not|no)\b", m, re.I))
+    has_neg_paid = bool(re.search(r"\b(not|no|don't|dont|without|except|exclude|only)\b[^.]{0,12}\bpaid\b", m, re.I))
+    if has_free and has_paid:
+        if has_neg_free and not has_neg_paid:
+            return "paid"
+        if has_neg_paid and not has_neg_free:
+            return "free"
+        if re.search(r"\b(free or paid|paid or free|free and paid)\b", m):
+            return None
+        if has_neg_free:
+            return "paid"
+        if has_neg_paid:
+            return "free"
+        return None
+    if has_free and has_neg_free:
+        return None  # "not free" without alternative -> clarification
+    if has_free:
         return "free"
-    if _PAID_RE.search(message):
+    if has_paid and not has_neg_paid:
         return "paid"
+    if has_paid and has_neg_paid:
+        return None
     return None
 
 
+# Count extraction mirrors backend's extractCount: requires event context or
+# explicit top/show/list prefix to avoid picking street numbers, years, or prices.
+_COUNT_EVENT_RE = re.compile(r"\b(\d{1,2})\s+events?\b", re.I)
+_COUNT_CONTEXT_RE = re.compile(r"\b(top|show|list|give\s+me|only|just)\s+(\d{1,2})\b", re.I)
+
 def extract_count(message: str) -> int | None:
-    m = _COUNT_RE.search(message)
-    if not m:
-        return None
-    n = int(m.group(1))
-    return n if 1 <= n <= 50 else None
+    m_low = message.lower()
+    # Prefer explicit "... 5 events" or "top 5"
+    match = _COUNT_EVENT_RE.search(message)
+    if match:
+        n = int(match.group(1))
+        if 1 <= n <= 50:
+            return n
+    match = _COUNT_CONTEXT_RE.search(message)
+    if match:
+        n = int(match.group(2))
+        if 1 <= n <= 50:
+            return n
+    # Fallback: bare "show 5" / "list 5" / "top 5" short query
+    if re.match(r"^(show|list|give|top)\s+\d{1,2}$", m_low.strip(), re.I):
+        mm = re.search(r"\b(\d{1,2})\b", m_low)
+        if mm:
+            n = int(mm.group(1))
+            if 1 <= n <= 50:
+                return n
+    return None
 
 
 def extract_slots(message: str) -> dict:

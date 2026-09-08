@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import dynamic from "next/dynamic"
+import remarkGfm from "remark-gfm"
 
 // Lazy-load heavy markdown renderer so initial bundle stays lean
 const ReactMarkdown = dynamic(() => import("react-markdown").then((m) => m.default), { ssr: false }) as any
@@ -29,8 +30,10 @@ import {
 } from "@/lib/stores/chatbot-store"
 
 // Renders bot replies as markdown: bold, lists, tables and clickable event
-// links. Internal links (/events/...) use Next Link so navigation keeps the
-// SPA shell; anything external opens in a new tab.
+// links. Internal links (/event/...) use Next Link so navigation keeps the
+// SPA shell; anything external opens in a new tab. Tables require remark-gfm
+// to parse pipe syntax and are rendered with overflow + borders so dense DB
+// data stays precise and scannable rather than collapsing into a wall of text.
 const markdownComponents = {
   a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
     if (!href) return <span>{children}</span>
@@ -62,6 +65,14 @@ const markdownComponents = {
   td: ({ children }: { children?: React.ReactNode }) => (
     <td className="border-b border-border/60 px-2.5 py-1.5 align-top last:border-b-0">{children}</td>
   ),
+  tr: ({ children }: { children?: React.ReactNode }) => <tr className="odd:bg-card even:bg-muted/20">{children}</tr>,
+  p: ({ children }: { children?: React.ReactNode }) => <p className="my-1 whitespace-pre-wrap break-words">{children}</p>,
+  li: ({ children }: { children?: React.ReactNode }) => <li className="leading-relaxed">{children}</li>,
+  code: ({ children }: { children?: React.ReactNode }) => <code className="rounded bg-muted px-1 py-0.5 text-[11px]">{children}</code>,
+  pre: ({ children }: { children?: React.ReactNode }) => <pre className="my-1 overflow-x-auto rounded bg-muted p-2 text-[11px]">{children}</pre>,
+  blockquote: ({ children }: { children?: React.ReactNode }) => <blockquote className="my-1 border-l-2 border-primary/30 pl-3 text-muted-foreground">{children}</blockquote>,
+  hr: () => <hr className="my-2 border-border" />,
+  h3: ({ children }: { children?: React.ReactNode }) => <h3 className="mt-1.5 font-semibold text-ink">{children}</h3>,
   strong: ({ children }: { children?: React.ReactNode }) => <strong className="font-semibold text-ink">{children}</strong>,
   em: ({ children }: { children?: React.ReactNode }) => <em className="text-muted-foreground">{children}</em>,
   ul: ({ children }: { children?: React.ReactNode }) => <ul className="my-1 list-disc space-y-0.5 pl-4">{children}</ul>,
@@ -112,10 +123,6 @@ function BotBubble({
   onQuickReply?: (q: string) => void
   onRetry?: (text: string) => void
 }) {
-  const [remarkGfm, setRemarkGfm] = useState<any>(null)
-  useEffect(() => {
-    void import("remark-gfm").then((m) => setRemarkGfm(() => (m as any).default ?? (m as any)))
-  }, [])
   return (
     <div className="bot-msg group flex flex-col items-start gap-1">
       <div
@@ -123,7 +130,7 @@ function BotBubble({
           error ? "border-destructive bg-destructive/[0.06]" : "border-secondary bg-muted"
         }`}
       >
-        <ReactMarkdown remarkPlugins={remarkGfm ? [remarkGfm] : []} components={markdownComponents}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
           {text}
         </ReactMarkdown>
       </div>
@@ -585,10 +592,22 @@ export function EventBot({
             </button>
           )}
 
-          {/* suggested options — shown until the first user message */}
+          {/* suggested options — shown until the first user message. Backend provides
+              personalized suggestions (nearby/tickets/categories) when available;
+              fallback ensures the panel never opens empty while suggestions load
+              or if the API fails — every chip below is grounded, no hallucinated
+              example questions. */}
           {messages.length <= 1 && (
             <div className="flex flex-wrap gap-2 px-4 pb-3">
-              {(suggestions.length ? suggestions : []).map((s) => (
+              {(suggestions.length
+                ? suggestions
+                : [
+                    "🎯 Recommend events for me",
+                    "📅 What events are coming up?",
+                    "💰 Any free events?",
+                    "🔥 What's trending?",
+                  ]
+              ).map((s) => (
                 <button
                   key={s}
                   onClick={() => send(s, eventId)}

@@ -12,10 +12,19 @@ const BROADCAST_TYPE = "new-event";
  */
 const broadcastNewEvent = async (event) => {
   try {
+    // Guard: require a valid event ObjectId — otherwise we'd create links like /event/undefined
+    const rawId = event?._id ? String(event._id) : null;
+    const isValidId = rawId && /^[0-9a-fA-F]{24}$/.test(rawId);
+    if (!isValidId) {
+      console.warn("[broadcastNewEvent] skipped: missing or invalid event._id", { title: event?.title, rawId });
+      return { notified: 0, total: 0, error: "missing event _id" };
+    }
+    const eventId = rawId;
     const title = `New event: ${event.title}`;
     const dateStr = new Date(event.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
     const message = `"${event.title}" — ${event.category || "Event"} at ${event.venue || "TBA"} on ${dateStr}${event.price?.amount > 0 ? ` • ${event.price.currency || "NPR"} ${event.price.amount}` : " • Free"} — tap to view & register.`;
-    const link = `/events/${event._id}`;
+    // Canonical attendee event detail is /event/[id] (public QR + authenticated detail). Use singular for consistency.
+    const link = `/event/${eventId}`;
     const orgId = event.organization;
 
     // Find recipients: all users except the organizer, with active accounts
@@ -45,7 +54,7 @@ const broadcastNewEvent = async (event) => {
           message,
           event: event._id,
           link,
-          data: { eventId: event._id, category: event.category, venue: event.venue },
+          data: { eventId, category: event.category, venue: event.venue },
         }));
       if (!docs.length) continue;
       try {
@@ -59,7 +68,7 @@ const broadcastNewEvent = async (event) => {
         if (io) {
           userIds.forEach((uid) => {
             io.to(`user:${String(uid)}`).emit("notification:created", {
-              notification: { title, message, type: BROADCAST_TYPE, event: event._id, link },
+              notification: { title, message, type: BROADCAST_TYPE, event: eventId, link },
               unread: 1,
             });
           });
@@ -71,7 +80,7 @@ const broadcastNewEvent = async (event) => {
         if (err.result && err.result.nInserted) notified += err.result.nInserted;
       }
     }
-    console.log(`[broadcastNewEvent] notified ${notified}/${recipients.length} users for event ${event._id}`);
+    console.log(`[broadcastNewEvent] notified ${notified}/${recipients.length} users for event ${eventId}`);
     return { notified, total: recipients.length };
   } catch (err) {
     console.error("[broadcastNewEvent] failed:", err.message);

@@ -120,10 +120,12 @@ export default function MyTicketsPage() {
             {list.map((ticket) => {
               const event = typeof ticket.event === "object" ? (ticket.event as EventData) : null
               const cancelledTicket = ticket.status === "cancelled"
+              const eventId = (event as unknown as { _id?: string })?._id
+              const validEventId = eventId && /^[0-9a-fA-F]{24}$/.test(String(eventId)) ? String(eventId) : null
               return (
                 <Link
                   key={ticket._id}
-                  href={event ? `/event/${event._id}` : "/dashboard"}
+                  href={validEventId ? `/event/${validEventId}` : "/dashboard"}
                   className="group relative flex overflow-hidden rounded-2xl border border-border bg-card transition-colors hover:border-primary/40"
                 >
                   <div className="w-2 shrink-0 bg-brand-gradient" />
@@ -168,7 +170,11 @@ export default function MyTicketsPage() {
                         {event && (
                           <>
                             <span className="flex items-center gap-1.5">
-                              <Calendar className="size-3.5" /> {new Date(event.date).toLocaleString()}
+                              <Calendar className="size-3.5" />{" "}
+                              {(() => {
+                                const d = event?.date ? new Date(event.date) : null
+                                return d && !Number.isNaN(d.getTime()) ? d.toLocaleString() : "Date not available"
+                              })()}
                             </span>
                             <span className="flex items-center gap-1.5">
                               <MapPin className="size-3.5" /> {event.venue || "Venue TBA"}

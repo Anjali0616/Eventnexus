@@ -86,16 +86,26 @@ def _call_gemini(messages: list[dict]) -> str | None:
         f"{model}:generateContent?key={api_key}"
     )
     # Gemini has no system role in v1beta — fold the system prompt into the
-    # first user turn, same as aiProvider.js's callGemini.
+    # first USER turn after it, same as aiProvider.js's callGemini. Previous
+    # code naively merged system with messages[1] even when messages[1] was
+    # an assistant turn, polluting the system instruction with assistant text
+    # and breaking the alternating user/assistant pattern when history exists.
+    # Now we find the first actual user entry to merge into.
     contents = [
         {"role": "user" if m["role"] == "system" else m["role"], "parts": [{"text": m["content"]}]}
         for m in messages
     ]
     if messages and messages[0]["role"] == "system":
-        if len(messages) > 1:
-            second = messages[1]["content"] if len(messages) > 1 else ""
-            contents[0]["parts"] = [{"text": f"{messages[0]['content']}\n\n{second}"}]
-            del contents[1]
+        first_user_idx = None
+        for i in range(1, len(messages)):
+            if messages[i]["role"] == "user":
+                first_user_idx = i
+                break
+        if first_user_idx is not None:
+            contents[0]["parts"] = [
+                {"text": f"{messages[0]['content']}\n\n{messages[first_user_idx]['content']}"}
+            ]
+            del contents[first_user_idx]
         else:
             contents[0]["parts"] = [{"text": messages[0]["content"]}]
 

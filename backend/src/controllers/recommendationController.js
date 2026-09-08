@@ -21,6 +21,7 @@ const getRecommendations = async (req, res) => {
       attendee: req.user._id,
       organization: req.user.organization,
       location: req.user.location,
+      userInterests: req.user.interests || [],
       limit: 50,
       withReasons: true,
     });

@@ -73,6 +73,9 @@ export function EventQrPoster({
   const [shareFeedback, setShareFeedback] = useState(false)
 
   const publicUrl = useMemo(() => {
+    if (!eventId || typeof eventId !== "string" || !eventId.trim()) {
+      return typeof window !== "undefined" ? `${window.location.origin}/event/unknown` : "/event/unknown"
+    }
     try {
       const origin = typeof window !== "undefined" ? window.location.origin : ""
       return buildPublicUrl(eventId, { baseUrl: origin || undefined, qrHint: true, withTracking: true })

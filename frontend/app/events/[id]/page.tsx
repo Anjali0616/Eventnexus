@@ -76,7 +76,7 @@ export default function PublicEventPage({ params }: { params: Promise<{ id: stri
 
   const { data: eventData, isLoading, isError } = useEvent(eventId)
   const { data: userData } = useCurrentUser()
-  const { data: ticketData } = useMyTickets()
+  const { data: ticketData } = useMyTickets({ limit: 100 })
   const { data: paymentConfig } = usePaymentConfig()
   const registerMutation = useRegisterForEvent()
   const cancelMutation = useCancelTicket()
@@ -124,14 +124,34 @@ export default function PublicEventPage({ params }: { params: Promise<{ id: stri
   const publicUrl = typeof window !== "undefined" ? window.location.href : ""
 
   const handleShare = async () => {
+    if (!publicUrl) return
     if (navigator.share) {
       try {
         await navigator.share({ title: event.title, text: `Check out ${event.title} on EventNexus!`, url: publicUrl })
-      } catch {}
-    } else {
-      await navigator.clipboard.writeText(publicUrl)
+        return
+      } catch (e: any) {
+        if (e?.name === "AbortError") return
+      }
+    }
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(publicUrl)
+      } else {
+        const ta = document.createElement("textarea")
+        ta.value = publicUrl
+        ta.setAttribute("readonly", "")
+        ta.style.position = "fixed"
+        ta.style.opacity = "0"
+        document.body.appendChild(ta)
+        ta.select()
+        const ok = document.execCommand("copy")
+        document.body.removeChild(ta)
+        if (!ok) throw new Error("copy failed")
+      }
       setShowShareFeedback(true)
       setTimeout(() => setShowShareFeedback(false), 2000)
+    } catch {
+      try { window.prompt("Copy this link:", publicUrl) } catch {}
     }
   }
 
@@ -157,11 +177,11 @@ export default function PublicEventPage({ params }: { params: Promise<{ id: stri
     cancelMutation.mutate(registeredTicket._id, { onSuccess: () => setConfirmingCancel(false) })
   }
 
-  const primaryLabel = isRegistered ? "You're registered" : isFull ? "Event full" : !free ? `Buy ticket — ${formatPrice(event.price)}` : "Register now"
+  const primaryLabel = isRegistered ? "You're registered" : isPast ? "Event concluded" : isFull ? "Event full" : !free ? `Buy ticket — ${formatPrice(event.price)}` : "Register now"
   const primaryPending = registerMutation.isPending || checkoutMutation.isPending
-  const primaryDisabled = primaryPending || isRegistered || (isFull && !isRegistered)
+  const primaryDisabled = primaryPending || isRegistered || isPast || (isFull && !isRegistered)
 
-  const showPaymentChoice = !isRegistered && !isFull && !free
+  const showPaymentChoice = !isRegistered && !isFull && !isPast && !free
   const isNprEvent = ((event.price?.currency || "NPR") as string).toUpperCase() === "NPR"
   const usdEstimate =
     isNprEvent && paymentConfig?.nprUsdRate && event.price?.amount != null
@@ -453,7 +473,7 @@ export default function PublicEventPage({ params }: { params: Promise<{ id: stri
                         </button>
                         <button
                           onClick={handlePayWithStripe}
-                          disabled={checkoutMutation.isPending || esewaMutation.isPending || paymentConfig?.enabled === false}
+                          disabled={checkoutMutation.isPending || esewaMutation.isPending || paymentConfig?.enabled === false || !paymentConfig}
                           className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 py-3 text-sm font-semibold text-ink transition-all hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-60"
                         >
                           {checkoutMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <CreditCard className="size-4" />}
