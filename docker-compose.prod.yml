@@ -17,7 +17,7 @@ services:
     image: ghcr.io/${IMAGE_PREFIX:-ashokabbhattaraii/event}-backend:${IMAGE_TAG:-latest}
     container_name: eventnexus-backend
     ports:
-      - "127.0.0.1:5000:5000"
+      - "5000:5000"
     env_file:
       - path: ./backend.env
         required: false
