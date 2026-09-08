@@ -144,7 +144,7 @@ const createInvitation = async (req, res) => {
         text:
           `${fromName} invited your organization to co-host "${event.title}" on ${eventDate} at ${event.venue}.` +
           (invitation.message ? `\n\nMessage: "${invitation.message}"` : "") +
-          `\n\nReview and respond: ${process.env.FRONTEND_URL || "http://localhost:3000"}/admin/collaboration`,
+          `\n\nReview and respond: ${String(process.env.FRONTEND_URL || "http://localhost:3000").split(",")[0].trim().replace(/\/$/, "")}/admin/collaboration`,
       },
     });
 
@@ -315,7 +315,7 @@ const respondToInvitation = async (req, res) => {
           (accept
             ? "\n\nTheir admins can now manage the event's attendees, check-in and analytics."
             : "") +
-          `\n\nView: ${process.env.FRONTEND_URL || "http://localhost:3000"}/admin/collaboration`,
+          `\n\nView: ${String(process.env.FRONTEND_URL || "http://localhost:3000").split(",")[0].trim().replace(/\/$/, "")}/admin/collaboration`,
       },
     });
 

@@ -20,10 +20,11 @@ function getTransporter() {
     SMTP_HOST,
     SMTP_PORT,
     SMTP_USER,
-    SMTP_PASS,
     EMAIL_FROM,
     NODE_ENV,
   } = process.env;
+  // Support both SMTP_PASS and SMTP_PASSWORD (env uses SMTP_PASSWORD, code checked SMTP_PASS)
+  const SMTP_PASS = process.env.SMTP_PASS || process.env.SMTP_PASSWORD;
 
   // If no SMTP config, we stay in dev mode (console log only)
   if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
@@ -72,9 +73,11 @@ const sendMail = async ({ to, subject, template, templateData, text, html, metad
   // If template is provided and no explicit html/text, render from template
   if (template && !html && !text) {
     try {
+      const rawFrontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+      const frontendUrl = String(rawFrontendUrl).split(",")[0].trim().replace(/\/$/, "") || "http://localhost:3000";
       const templateResult = renderEmail(template, {
         ...templateData,
-        frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
+        frontendUrl,
       });
       finalHtml = templateResult;
       // Generate text version from HTML (strip tags)

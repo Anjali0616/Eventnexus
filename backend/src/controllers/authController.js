@@ -136,7 +136,8 @@ const sendVerificationEmail = async (user) => {
   user.emailVerificationExpiresAt = new Date(Date.now() + EMAIL_TOKEN_TTL_MS);
   await user.save();
 
-  const link = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
+  const frontendBase = String(process.env.FRONTEND_URL || "http://localhost:3000").split(",")[0].trim().replace(/\/$/, "");
+  const link = `${frontendBase}/verify-email?token=${token}`;
   await sendMail({
     to: user.email,
     subject: "Verify your EventNexus email",
@@ -849,7 +850,8 @@ const forgotPassword = async (req, res) => {
     user.passwordResetExpiresAt = new Date(Date.now() + EMAIL_TOKEN_TTL_MS);
     await user.save();
 
-    const link = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+    const frontendBase = String(process.env.FRONTEND_URL || "http://localhost:3000").split(",")[0].trim().replace(/\/$/, "");
+    const link = `${frontendBase}/reset-password?token=${token}`;
     await sendMail({
       to: user.email,
       subject: "Reset your EventNexus password",

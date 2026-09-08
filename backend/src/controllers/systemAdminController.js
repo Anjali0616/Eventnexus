@@ -88,7 +88,7 @@ const approveOrg = async (req, res) => {
         to: admin.email,
         subject: "Your organization has been approved",
         template: "org-approved",
-        text: `Hi ${admin.name},\n\nGreat news — ${org.name} has been verified and approved. You can now log in to your EventNexus workspace and start building your team and events.\n\n${process.env.FRONTEND_URL}/login`,
+        text: `Hi ${admin.name},\n\nGreat news — ${org.name} has been verified and approved. You can now log in to your EventNexus workspace and start building your team and events.\n\n${String(process.env.FRONTEND_URL || "http://localhost:3000").split(",")[0].trim().replace(/\/$/, "")}/login`,
         metadata: { org: org.name },
       }).catch((err) => console.error("[mail] approval notice failed:", err.message));
     }
