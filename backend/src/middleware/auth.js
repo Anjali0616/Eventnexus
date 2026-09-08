@@ -195,6 +195,14 @@ const requireOrgAdmin = async (req, res, next) => {
   try {
     const orgId = req.user?.organization;
     if (!orgId) {
+      // Attendee is a normal user by design with NO organization requirement
+      // (authController register: organization is optional for attendee).
+      // Attendee-facing reads (speakers, sessions) must not 403 here; the
+      // write routes that truly require org-admin add an explicit
+      // authorize("organizer","admin","org_admin") ahead of this guard so an
+      // attendee bypass here never grants write access. Organizer / org_admin
+      // without an org is a misconfiguration and must still be rejected.
+      if (req.user?.role === "attendee") return next();
       return res.status(403).json({ message: "User has no organization assigned" });
     }
     const [membership, organization] = await Promise.all([

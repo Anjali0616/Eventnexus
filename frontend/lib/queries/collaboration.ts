@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { collaborationApi } from "../api/collaboration";
+import { useHasToken } from "../hooks/use-has-token";
+import { useCurrentUser } from "./auth";
 import { getErrorMessage } from "../errors";
 
 export const collaborationKeys = {
@@ -8,10 +10,15 @@ export const collaborationKeys = {
 };
 
 export function useCollaborationSuggestions() {
+  const hasToken = useHasToken();
+  const { data: userData } = useCurrentUser();
+  const currentUser = (userData as { user?: { role?: string } } | undefined)?.user;
+  const canAccess = !!currentUser && currentUser.role !== "attendee";
   return useQuery({
     queryKey: collaborationKeys.all,
     queryFn: collaborationApi.list,
     retry: false,
+    enabled: hasToken && canAccess,
   });
 }
 

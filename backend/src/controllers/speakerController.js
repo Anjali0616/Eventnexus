@@ -48,7 +48,14 @@ const getOrganizationSpeakers = async (req, res) => {
   try {
     const organization = req.user.organization;
     if (!organization) {
-      return res.status(400).json({ message: "No organization context" });
+      // Attendee without org — return empty list rather than 403 so the
+      // Event Details page (useOrganizationSpeakers) does not break.
+      // Organizer / org_admin without org is a misconfiguration and must
+      // still be rejected with 403 to preserve tenant isolation.
+      if (req.user.role === "attendee") {
+        return res.json({ speakers: [], pagination: { page: 1, limit: 20, total: 0, pages: 0 } });
+      }
+      return res.status(403).json({ message: "User has no organization assigned" });
     }
     const { page, limit, skip } = parsePagination(req.query, { defaultLimit: 20 });
 
@@ -82,8 +89,14 @@ const getSpeakerById = async (req, res) => {
     if (!speaker) {
       return res.status(404).json({ message: "Speaker not found" });
     }
-    if (speaker.organization.toString() !== req.user.organization?.toString()) {
-      return res.status(403).json({ message: "Not authorized" });
+    // Attendee without org is allowed to view public speaker data; do not 403.
+    // Organizer/org_admin without org is still rejected (misconfiguration).
+    if (req.user.organization) {
+      if (speaker.organization.toString() !== req.user.organization.toString()) {
+        return res.status(403).json({ message: "Not authorized" });
+      }
+    } else if (req.user.role !== "attendee") {
+      return res.status(403).json({ message: "User has no organization assigned" });
     }
     res.json({ speaker });
   } catch (error) {

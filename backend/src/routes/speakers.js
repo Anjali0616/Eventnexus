@@ -12,12 +12,17 @@ const validate = require("../middleware/validate");
 
 const router = express.Router();
 
-router.get("/", protect, requireOrgAdmin, getOrganizationSpeakers);
-router.get("/:id", protect, requireOrgAdmin, getSpeakerById);
+// Attendee-facing reads must not require org admin. Attendees are normal
+// users without an organization (see authController register) and hit these
+// from the Event Details page (useOrganizationSpeakers). Block them with
+// 403 here would break the attendee experience.
+router.get("/", protect, authorize("organizer", "admin", "org_admin", "attendee"), getOrganizationSpeakers);
+router.get("/:id", protect, authorize("organizer", "admin", "org_admin", "attendee"), getSpeakerById);
 
 router.post(
   "/",
   protect,
+  authorize("organizer", "admin", "org_admin"),
   requireOrgAdmin,
   [body("name").notEmpty().withMessage("Speaker name is required")],
   validate,
@@ -27,6 +32,7 @@ router.post(
 router.put(
   "/:id",
   protect,
+  authorize("organizer", "admin", "org_admin"),
   requireOrgAdmin,
   [
     body("name").optional().notEmpty().withMessage("Name cannot be empty"),
@@ -36,6 +42,6 @@ router.put(
   updateSpeaker
 );
 
-router.delete("/:id", protect, requireOrgAdmin, deleteSpeaker);
+router.delete("/:id", protect, authorize("organizer", "admin", "org_admin"), requireOrgAdmin, deleteSpeaker);
 
 module.exports = router;

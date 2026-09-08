@@ -115,7 +115,8 @@ export function RoleEventDetail({
   const createSession = useCreateSession(eventId)
   const updateSession = useUpdateSession(eventId)
   const deleteSession = useDeleteSession(eventId)
-  const { data: orgSpeakers } = useOrganizationSpeakers()
+  // Speakers are org-scoped (requireOrgAdmin → 403 for attendee without org). The SessionsPanel only needs them when the viewer can actually manage sessions, so skip the fetch for Attendees to avoid expected 403 + global toast.
+  const { data: orgSpeakers } = useOrganizationSpeakers({ enabled: !isAttendee })
   // Save/bookmark. Signed-in users get the server-side saved list (follows
   // the account across devices); guests fall back to localStorage via the
   // same helper the /saved-events page uses.

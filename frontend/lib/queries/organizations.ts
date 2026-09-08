@@ -7,6 +7,7 @@ import {
   type CoHostOrganization,
 } from "../api/organizations";
 import { useHasToken } from "../hooks/use-has-token";
+import { useCurrentUser } from "./auth";
 import { getErrorMessage } from "../errors";
 
 export const organizationKeys = {
@@ -23,11 +24,15 @@ export function useOrganizations() {
 }
 
 export function useMyOrganization() {
+  const hasToken = useHasToken();
+  const { data: userData } = useCurrentUser();
+  const currentUser = (userData as { user?: { role?: string; organization?: string } } | undefined)?.user;
+  const canAccess = !!currentUser && !!currentUser.organization && (currentUser.role === "admin" || currentUser.role === "org_admin");
   return useQuery({
     queryKey: organizationKeys.mine,
     queryFn: organizationsApi.getMine,
     retry: false,
-    enabled: useHasToken(),
+    enabled: hasToken && canAccess,
   });
 }
 
@@ -46,10 +51,15 @@ export function useUpdateMyOrganization() {
 
 // Co-host queries
 export function useCoHostOrganizations(eventId: string) {
+  const hasToken = useHasToken();
+  const { data: userData } = useCurrentUser();
+  const currentUser = (userData as { user?: { role?: string; organization?: string } } | undefined)?.user;
+  const canAccess = !!currentUser && currentUser.role !== "attendee" && !!currentUser.organization;
   return useQuery({
     queryKey: organizationKeys.coHosts(eventId),
     queryFn: () => organizationsApi.listCoHosts(eventId),
-    enabled: !!eventId,
+    enabled: !!eventId && hasToken && canAccess,
+    retry: false,
   });
 }
 
@@ -75,10 +85,15 @@ export const invitationKeys = {
 
 // Invitations this event has sent (pending / accepted / declined / cancelled).
 export function useEventInvitations(eventId: string) {
+  const hasToken = useHasToken();
+  const { data: userData } = useCurrentUser();
+  const currentUser = (userData as { user?: { role?: string } } | undefined)?.user;
+  const canAccess = !!currentUser && currentUser.role !== "attendee";
   return useQuery({
     queryKey: invitationKeys.forEvent(eventId),
     queryFn: () => coHostInvitationsApi.listForEvent(eventId),
-    enabled: !!eventId,
+    enabled: !!eventId && hasToken && canAccess,
+    retry: false,
   });
 }
 
@@ -109,10 +124,15 @@ export function useCancelInvitation(eventId: string) {
 
 // The caller's own organization's inbox, across every event.
 export function useMyInvitations() {
+  const hasToken = useHasToken();
+  const { data: userData } = useCurrentUser();
+  const currentUser = (userData as { user?: { role?: string } } | undefined)?.user;
+  const canAccess = !!currentUser && currentUser.role !== "attendee";
   return useQuery({
     queryKey: invitationKeys.mine,
     queryFn: coHostInvitationsApi.listMine,
-    enabled: useHasToken(),
+    enabled: hasToken && canAccess,
+    retry: false,
   });
 }
 

@@ -127,12 +127,22 @@ apiClient.interceptors.response.use(
     if (response && response.status >= 400 && response.status !== 401) {
       // Let caller handle 400 validation inline if they want to hide toast
       const hideToast = (config as unknown as { hideErrorToast?: boolean })?.hideErrorToast;
-      if (!hideToast && typeof window !== "undefined") {
+      const url: string = config?.url || "";
+      const rawMsg: string = response.data?.message || response.data?.error || "";
+      // 403 "User has no organization assigned" is expected for attendee without org
+      // on org-scoped lists (speakers, org members, etc.). The UI handles empty
+      // data gracefully, so suppress the global toast to avoid duplicate red toasts.
+      const SILENT_403_MESSAGES = ["User has no organization assigned", "No organization context"];
+      const SILENT_403_ENDPOINTS = ["/speakers", "/organizations/me", "/organizations/members", "/collaboration/invitations"];
+      const isSilentOrg403 =
+        !hideToast &&
+        response.status === 403 &&
+        (SILENT_403_MESSAGES.includes(rawMsg) || SILENT_403_ENDPOINTS.some((p) => url.includes(p)));
+      if (!hideToast && !isSilentOrg403 && typeof window !== "undefined") {
         // Lazy import to avoid SSR issues
         import("sonner").then(({ toast }) => {
-          const msg = response.data?.message || response.data?.error || (response.status === 403 ? "You don't have permission to do that." : response.status === 404 ? "Not found." : response.status === 409 ? "Already exists." : response.status >= 500 ? "Something went wrong on our side. Please try again." : "Request failed.");
+          const msg = rawMsg || (response.status === 403 ? "You don't have permission to do that." : response.status === 404 ? "Not found." : response.status === 409 ? "Already exists." : response.status >= 500 ? "Something went wrong on our side. Please try again." : "Request failed.");
           // Avoid duplicate toast for auth endpoints that show inline message
-          const url = config?.url || "";
           const isInlineHandled = ["/auth/login", "/auth/register", "/auth/org-register", "/auth/google"].some((p) => url.includes(p));
           if (!isInlineHandled) toast.error(msg);
         });

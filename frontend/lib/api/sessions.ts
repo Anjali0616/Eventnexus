@@ -114,12 +114,14 @@ export const sessionsApi = {
 
 export const speakersApi = {
   list: async (): Promise<{ speakers: SpeakerData[] }> => {
-    const res = await apiClient.get("/speakers");
+    // Attendee without org gets 403 "User has no organization assigned" — expected, not an error.
+    // Hide the global error toast; the query handles empty state silently.
+    const res = await apiClient.get("/speakers", { hideErrorToast: true } as unknown as Record<string, unknown>);
     return res.data;
   },
 
   getById: async (id: string): Promise<{ speaker: SpeakerData }> => {
-    const res = await apiClient.get(`/speakers/${id}`);
+    const res = await apiClient.get(`/speakers/${id}`, { hideErrorToast: true } as unknown as Record<string, unknown>);
     return res.data;
   },
 

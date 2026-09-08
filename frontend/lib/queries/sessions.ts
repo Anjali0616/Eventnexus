@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { sessionsApi, type CreateSessionPayload, type SessionData } from "../api/sessions";
 import { speakersApi, type CreateSpeakerPayload, type SpeakerData } from "../api/sessions";
 import { useHasToken } from "../hooks/use-has-token";
+import { useCurrentUser } from "./auth";
 import { getErrorMessage } from "../errors";
 
 export const sessionKeys = {
@@ -26,6 +27,7 @@ export function useEventSessions(eventId: string) {
     queryFn: () => sessionsApi.getByEvent(eventId),
     enabled: useHasToken() && !!eventId,
     placeholderData: keepPreviousData,
+    retry: false,
   });
 }
 
@@ -80,19 +82,29 @@ export function useDeleteSession(eventId: string) {
   });
 }
 
-export function useOrganizationSpeakers() {
+export function useOrganizationSpeakers(opts?: { enabled?: boolean }) {
+  const hasToken = useHasToken();
+  const { data: userData } = useCurrentUser();
+  const currentUser = (userData as { user?: { role?: string; organization?: string } } | undefined)?.user;
+  const canAccess = !!currentUser && !!currentUser.organization && currentUser.role !== "attendee";
   return useQuery({
     queryKey: speakerKeys.list,
     queryFn: () => speakersApi.list(),
-    enabled: useHasToken(),
+    enabled: hasToken && canAccess && (opts?.enabled ?? true),
+    retry: false,
   });
 }
 
 export function useSpeaker(id: string) {
+  const hasToken = useHasToken();
+  const { data: userData } = useCurrentUser();
+  const currentUser = (userData as { user?: { role?: string; organization?: string } } | undefined)?.user;
+  const canAccess = !!currentUser && !!currentUser.organization && currentUser.role !== "attendee";
   return useQuery({
     queryKey: speakerKeys.detail(id),
     queryFn: () => speakersApi.getById(id),
-    enabled: useHasToken() && !!id,
+    enabled: hasToken && !!id && canAccess,
+    retry: false,
   });
 }
 
