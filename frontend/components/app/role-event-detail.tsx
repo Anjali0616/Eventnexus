@@ -34,6 +34,7 @@ import {
 } from "lucide-react"
 import { AppShell } from "@/components/app/app-shell"
 import { Reveal } from "@/components/anim/reveal"
+import { toast } from "sonner"
 import { QrCode } from "@/components/app/qr-code"
 import { FeedbackForm } from "@/components/app/feedback-form"
 import { FeedbackSummaryPanel } from "@/components/app/feedback-summary"
@@ -287,6 +288,10 @@ export function RoleEventDetail({
   const publicUrl = typeof window !== "undefined" ? `${window.location.origin}/event/${eventId}` : ""
 
   const handleShare = async () => {
+    if (!publicUrl) {
+      toast.error("Link not ready")
+      return
+    }
     if (navigator.share) {
       try {
         await navigator.share({
@@ -294,11 +299,34 @@ export function RoleEventDetail({
           text: `Check out ${event.title} on EventNexus!`,
           url: publicUrl,
         })
-      } catch {}
-    } else {
-      await navigator.clipboard.writeText(publicUrl)
+        return
+      } catch (e: any) {
+        // AbortError means user cancelled share sheet — don't fallback to copy
+        if (e?.name === "AbortError") return
+      }
+    }
+    // Fallback to clipboard with http support
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(publicUrl)
+      } else {
+        const ta = document.createElement("textarea")
+        ta.value = publicUrl
+        ta.setAttribute("readonly", "")
+        ta.style.position = "fixed"
+        ta.style.opacity = "0"
+        document.body.appendChild(ta)
+        ta.select()
+        const ok = document.execCommand("copy")
+        document.body.removeChild(ta)
+        if (!ok) throw new Error("copy failed")
+      }
+      toast.success("Link copied")
       setShowShareFeedback(true)
       setTimeout(() => setShowShareFeedback(false), 2000)
+    } catch {
+      try { window.prompt("Copy this link:", publicUrl) } catch {}
+      toast.error("Copy failed — please copy manually")
     }
   }
 
@@ -618,11 +646,14 @@ export function RoleEventDetail({
               </Reveal>
             )}
 
-            <Reveal>
-              <EventQrPoster eventId={eventId} eventTitle={event.title} event={event} ticket={registeredTicket ?? null} role={role} />
-            </Reveal>
+            {canManage && (
+              <Reveal>
+                <EventQrPoster eventId={eventId} eventTitle={event.title} event={event} ticket={registeredTicket ?? null} role={role} />
+              </Reveal>
+            )}
 
-            {isAttendee && (
+            {/* Attendee sees agenda as read-only (already above), not the organizer SessionsPanel CRUD */}
+            {false && isAttendee && (
               <Reveal>
                 <SessionsPanel event={event} sessions={sessionsData} createSession={createSession} updateSession={updateSession} deleteSession={deleteSession} orgSpeakers={orgSpeakers?.speakers ?? []} />
               </Reveal>
