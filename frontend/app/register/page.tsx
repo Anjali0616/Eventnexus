@@ -236,13 +236,6 @@ function RegisterPageInner() {
             <Field label="Confirm Password" type="password" placeholder="••••••••" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
           </div>
 
-          <div className="rounded-xl border border-border bg-muted/20 px-4 py-3">
-            <p className="text-sm font-medium text-ink">No organization needed</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              As an attendee you can discover and join <span className="font-medium">every event</span> across all organizations — no org link required. Organizer accounts are created via the Organization tab.
-            </p>
-          </div>
-
           <button
             type="submit"
             disabled={registerMutation.isPending || !attendeeCanSubmit}
