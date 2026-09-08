@@ -207,14 +207,24 @@ const register = async (req, res) => {
         status: "pending",
         owner: new mongoose.Types.ObjectId(),
       });
-    } else {
-      // Organizer/attendee sign-up joins an existing tenant.
+    } else if (resolvedRole === "organizer") {
+      // Organizer must belong to an organization
       if (!organizationId) {
-        return res.status(400).json({ message: "Organization is required" });
+        return res.status(400).json({ message: "Organization is required for organizer" });
       }
       organization = await Organization.findById(organizationId);
       if (!organization || organization.status !== "active") {
         return res.status(400).json({ message: "Invalid organization" });
+      }
+    } else {
+      // Attendee: organization is optional — normal users can see all events without being tied to a tenant
+      if (organizationId) {
+        organization = await Organization.findById(organizationId);
+        if (!organization || organization.status !== "active") {
+          return res.status(400).json({ message: "Invalid organization" });
+        }
+      } else {
+        organization = null;
       }
     }
 
@@ -227,7 +237,7 @@ const register = async (req, res) => {
       email,
       password,
       role: resolvedRole,
-      organization: organization._id,
+      organization: organization ? organization._id : null,
     });
 
     // For org_admin self-registration, fix the placeholder owner now that user exists.

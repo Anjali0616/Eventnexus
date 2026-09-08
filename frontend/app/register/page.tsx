@@ -85,17 +85,11 @@ function RegisterPageInner() {
   const eventIdFromRedirect = rawEventId && /^[0-9a-f]{24}$/i.test(rawEventId) ? rawEventId : undefined
   const loginHref = redirectTo ? `/login?redirect=${encodeURIComponent(redirectTo)}` : "/login"
 
-  // QR flow: auto-lock organization to scanned event's org (prevents cross-tenant join)
+  // QR flow: attendee is a normal user with no organization needed — sees all events
   const { data: qrEventData } = useEvent(isQrFlow && eventIdFromRedirect ? eventIdFromRedirect : "")
   useEffect(() => {
-    if (isQrFlow && qrEventData?.event) {
-      const org = qrEventData.event.organization
-      const orgId = typeof org === "string" ? org : (org as any)?._id
-      if (orgId) setOrganizationId(String(orgId))
-      // Force attendee mode even if user somehow switched
-      if (mode !== "attendee") setMode("attendee")
-    }
-  }, [isQrFlow, qrEventData?.event, mode])
+    if (isQrFlow && mode !== "attendee") setMode("attendee")
+  }, [isQrFlow, mode])
 
   const registerMutation = useRegister(redirectTo)
   const orgRegister = useOrgRegister()
@@ -105,14 +99,11 @@ function RegisterPageInner() {
   const setOrg = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }))
 
-  // Self-service registration is attendee-only. Admin/organizer roles are
-  // privileged (event management, tenant administration) and are assigned by
-  // an existing admin or via the ADMIN_EMAILS allowlist — the backend
-  // rejects privileged roles from this form (authController.register).
+  // Attendee is a normal user — no organization required, sees all events
   const handleAttendeeSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (password !== confirmPassword) return
-    registerMutation.mutate({ name, email, password, role: "attendee", organizationId })
+    registerMutation.mutate({ name, email, password, role: "attendee" })
   }
 
   const handleOrgSubmit = (e: React.FormEvent) => {
@@ -128,7 +119,7 @@ function RegisterPageInner() {
   }
 
   const attendeeCanSubmit =
-    !!name && !!email && !!password && password === confirmPassword && !!organizationId
+    !!name && !!email && !!password && password === confirmPassword
   const orgCanSubmit =
     !!form.orgName &&
     !!form.adminName &&
@@ -245,37 +236,12 @@ function RegisterPageInner() {
             <Field label="Confirm Password" type="password" placeholder="••••••••" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
           </div>
 
-          {isQrFlow ? (
-            <div className="auth-field">
-              <label className="text-sm font-medium text-ink">Organization</label>
-              <div className="mt-1.5 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm">
-                <span className="font-medium text-ink">{qrEventData?.event ? (typeof qrEventData.event.organization === "string" ? qrEventData.event.organization : (qrEventData.event.organization as any)?.name || "Event organization") : "Loading event organization..."}</span>
-                <p className="mt-1 text-xs text-muted-foreground">Locked to scanned event — you&apos;ll join this organization as attendee. No role switch.</p>
-              </div>
-            </div>
-          ) : (
-            <div className="auth-field">
-              <label className="text-sm font-medium text-ink">Organization</label>
-              <select
-                value={organizationId}
-                onChange={(e) => setOrganizationId(e.target.value)}
-                className="mt-1.5 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-ink outline-none transition-all focus:border-primary focus:ring-4 focus:ring-primary/10"
-              >
-                <option value="">
-                  {orgsLoading ? "Loading organizations..." : "Select an organization"}
-                </option>
-                {organizations.map((org) => (
-                  <option key={org._id} value={org._id}>
-                    {org.name}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-2 text-xs text-muted-foreground">
-                You&apos;ll join as an attendee. Organizer and admin accounts are granted by your organization&apos;s
-                admin.
-              </p>
-            </div>
-          )}
+          <div className="rounded-xl border border-border bg-muted/20 px-4 py-3">
+            <p className="text-sm font-medium text-ink">No organization needed</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              As an attendee you can discover and join <span className="font-medium">every event</span> across all organizations — no org link required. Organizer accounts are created via the Organization tab.
+            </p>
+          </div>
 
           <button
             type="submit"
