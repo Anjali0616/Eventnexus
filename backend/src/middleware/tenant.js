@@ -2,7 +2,9 @@
 // so cross-org data access is a structural impossibility rather than a per-controller convention.
 const scopeToOrg = (filter, req) => {
   if (!req.user.organization) {
-    throw new Error("User has no organization assigned");
+    const err = new Error("User has no organization assigned");
+    err.statusCode = 403;
+    throw err;
   }
   return { ...filter, organization: req.user.organization };
 };

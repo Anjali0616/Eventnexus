@@ -129,21 +129,32 @@ SEED_CORPUS = [
 def _drop_stale(path, name):
     """A skipped model must not keep serving stale predictions."""
     if os.path.exists(path):
-        os.remove(path)
+        try:
+            os.remove(path)
+        except OSError as e:
+            print(f"[train] {name}: failed to remove stale {path}: {e}")
+            return
         print(f"[train] {name}: removed stale model {path}")
 
 
 def _record_meta(model_name, trained, samples=0):
     meta = {"trainedAt": datetime.now(timezone.utc).isoformat(), "trained": trained, "samples": samples}
     try:
-        existing = json.load(open(META_PATH)) if os.path.exists(META_PATH) else {}
+        if os.path.exists(META_PATH):
+            with open(META_PATH, "r", encoding="utf-8") as fh:
+                existing = json.load(fh)
+        else:
+            existing = {}
     except (json.JSONDecodeError, OSError):
         existing = {}
     models = existing.setdefault("models", {})
     models[model_name] = meta
     existing["models"] = models
-    with open(META_PATH, "w") as fh:
+    # Atomic write via temp file
+    tmp_path = META_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as fh:
         json.dump(existing, fh, indent=2)
+    os.replace(tmp_path, META_PATH)
     return meta
 
 
@@ -158,8 +169,22 @@ def train_attendance():
         _drop_stale(ATTENDANCE_PATH, "attendance")
         return _record_meta("attendance", False)
 
-    y = np.asarray([e["registered"] for e in events if str(e["_id"]) in ids], dtype=float)
-    y = y[: X.shape[0]]
+    # Build y aligned with ids order from build_rows (which filters)
+    id_to_event = {str(e["_id"]): e for e in events}
+    y_list = []
+    for eid in ids:
+        ev = id_to_event.get(eid)
+        if ev is None:
+            continue
+        try:
+            y_list.append(float(ev.get("registered", 0)))
+        except (ValueError, TypeError):
+            y_list.append(0.0)
+    y = np.asarray(y_list, dtype=float)
+    if y.shape[0] != X.shape[0]:
+        print(f"[train] attendance skipped: y/X mismatch {y.shape[0]} vs {X.shape[0]}")
+        _drop_stale(ATTENDANCE_PATH, "attendance")
+        return _record_meta("attendance", False)
 
     model = HistGradientBoostingRegressor(
         max_iter=300, learning_rate=0.08, max_depth=4, random_state=42
@@ -199,7 +224,9 @@ def train_cf():
 
     n_components = min(20, len(users) - 1, len(events) - 1)
     if n_components < 2:
-        n_components = 2
+        print(f"[train] cf skipped: insufficient components {n_components}")
+        _drop_stale(CF_PATH, "cf")
+        return _record_meta("cf", False)
     svd = TruncatedSVD(n_components=n_components, random_state=42)
     user_latent = normalize(svd.fit_transform(matrix))
     event_latent = normalize(svd.components_.T)
@@ -325,7 +352,12 @@ def train_match():
         min_df=1,
         sublinear_tf=True,
     )
-    vectorizer.fit(corpus)
+    try:
+        vectorizer.fit(corpus)
+    except ValueError as e:
+        print(f"[train] collaboration_match skipped: vectorizer {e}")
+        _drop_stale(MATCH_PATH, "collaboration_match")
+        return _record_meta("collaboration_match", False, samples=len(labels))
 
     X_rows, pair_ids = build_pair_rows(
         [{"id": f"{i}", "event_a": a, "event_b": b} for i, (a, b) in enumerate(pairs)]
@@ -366,12 +398,19 @@ def train_match():
 
 
 def train_all():
-    results = {
-        "attendance": train_attendance(),
-        "cf": train_cf(),
-        "intent": train_intent(),
-        "collaboration_match": train_match(),
-    }
+    results = {}
+    for name, fn in [
+        ("attendance", train_attendance),
+        ("cf", train_cf),
+        ("intent", train_intent),
+        ("collaboration_match", train_match),
+    ]:
+        try:
+            results[name] = fn()
+        except Exception as e:
+            print(f"[train] {name} failed: {e}")
+            _drop_stale({"attendance": ATTENDANCE_PATH, "cf": CF_PATH, "intent": INTENT_PATH, "collaboration_match": MATCH_PATH}[name], name)
+            results[name] = _record_meta(name, False)
     results["trainedAt"] = datetime.now(timezone.utc).isoformat()
     return results
 

@@ -28,6 +28,7 @@ const { notFound, errorHandler } = require("./middleware/errors");
 const { sanitizeRequest } = require("./middleware/sanitize");
 
 const app = express();
+app.set("trust proxy", 1);
 
 connectDB().then(() => {
   // Start the in-process reminder scheduler once the DB is ready.
@@ -51,9 +52,27 @@ app.use(
 );
 app.disable("x-powered-by");
 
+const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:3000")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+const extraOrigins = [
+  "http://3.106.232.125",
+  "http://3.106.232.125:3000",
+  "http://3.106.232.125:80",
+  "http://3.106.232.125:5000",
+  "http://eventnexus-alb-1182569403.ap-southeast-2.elb.amazonaws.com",
+  "http://localhost:3000",
+  "http://localhost:80",
+];
+const allAllowed = [...new Set([...allowedOrigins, ...extraOrigins])];
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);
+      if (allAllowed.includes(origin)) return cb(null, true);
+      return cb(new Error("Not allowed by CORS"));
+    },
     credentials: true,
   })
 );

@@ -1,10 +1,11 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { Building2, Loader2, MailCheck, Ticket, UserRound } from "lucide-react"
 import { AuthShell } from "@/components/auth/auth-shell"
-import { useRegister } from "@/lib/queries/auth"
+import { useCurrentUser, useRegister, useLogout, roleRoutes } from "@/lib/queries/auth"
 import { useOrganizations } from "@/lib/queries/organizations"
 import { useOrgRegister } from "@/lib/queries/system"
 import { useEvent } from "@/lib/queries/events"
@@ -42,12 +43,18 @@ function Field({ label, ...props }: { label: string } & React.InputHTMLAttribute
 
 type RegisterMode = "attendee" | "organization"
 
-export default function RegisterPage() {
-  // Initial mode comes from the URL (?type=organization) — read in an effect,
-  // not a state initializer, so the client render stays identical to the
-  // server render (hydration-safe; same pattern as /admin/events).
-  const [mode, setMode] = useState<RegisterMode>("attendee")
-  const [redirectTo, setRedirectTo] = useState<string | null>(null)
+function RegisterPageInner() {
+  const searchParams = useSearchParams()
+  const rawRedirect = searchParams.get("redirect")
+  const rawType = searchParams.get("type")
+  const sanitizedRedirect = sanitizeEventRedirect(rawRedirect)
+  const isQrFlow = !!sanitizedRedirect && sanitizedRedirect.includes("/event/")
+  const initialMode: RegisterMode = isQrFlow ? "attendee" : rawType === "organization" ? "organization" : "attendee"
+  const [mode, setMode] = useState<RegisterMode>(initialMode)
+  const [redirectTo] = useState<string | null>(sanitizedRedirect)
+  const { data: currentUserData } = useCurrentUser()
+  const alreadyAuthed = !!currentUserData?.user
+  const logout = useLogout()
 
   // --- Attendee account ------------------------------------------------------
   const [name, setName] = useState("")
@@ -74,14 +81,21 @@ export default function RegisterPage() {
   const [adminPassword, setAdminPassword] = useState("")
   const [adminConfirmPassword, setAdminConfirmPassword] = useState("")
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    if (params.get("type") === "organization") setMode("organization")
-    setRedirectTo(sanitizeEventRedirect(params.get("redirect")))
-  }, [])
-
-  const eventIdFromRedirect = redirectTo?.split("/event/")[1]
+  const rawEventId = redirectTo?.split("/event/")[1]?.split("?")[0]?.split("/")[0]
+  const eventIdFromRedirect = rawEventId && /^[0-9a-f]{24}$/i.test(rawEventId) ? rawEventId : undefined
   const loginHref = redirectTo ? `/login?redirect=${encodeURIComponent(redirectTo)}` : "/login"
+
+  // QR flow: auto-lock organization to scanned event's org (prevents cross-tenant join)
+  const { data: qrEventData } = useEvent(isQrFlow && eventIdFromRedirect ? eventIdFromRedirect : "")
+  useEffect(() => {
+    if (isQrFlow && qrEventData?.event) {
+      const org = qrEventData.event.organization
+      const orgId = typeof org === "string" ? org : (org as any)?._id
+      if (orgId) setOrganizationId(String(orgId))
+      // Force attendee mode even if user somehow switched
+      if (mode !== "attendee") setMode("attendee")
+    }
+  }, [isQrFlow, qrEventData?.event, mode])
 
   const registerMutation = useRegister(redirectTo)
   const orgRegister = useOrgRegister()
@@ -131,36 +145,85 @@ export default function RegisterPage() {
 
   return (
     <AuthShell heading="Create your account" sub="Set up your EventNexus workspace in minutes.">
-      {/* Account type selector: join as an attendee or register a whole
-           organization. Both live on this page — no separate /org-register. */}
-      <div
-        className={`grid grid-cols-2 gap-2 rounded-xl border border-border bg-muted/40 p-1 transition ${
-          orgSuccess ? "pointer-events-none opacity-60" : ""
-        }`}
-      >
-        <button
-          type="button"
-          onClick={() => setMode("attendee")}
-          className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold transition-all ${
-            mode === "attendee" ? "bg-card text-ink shadow-sm" : "text-muted-foreground hover:text-ink"
+      {alreadyAuthed && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          You&apos;re already logged in as <span className="font-semibold">{currentUserData?.user?.name}</span> ({currentUserData?.user?.role}).{" "}
+          {isQrFlow && eventIdFromRedirect ? (
+            <>
+              <Link href={`/event/${eventIdFromRedirect}`} className="font-semibold text-primary hover:underline">
+                Go to event
+              </Link>{" "}
+              or log out to create a new account.
+            </>
+          ) : (
+            "Log out to create a new account, or head to your dashboard."
+          )}
+        </div>
+      )}
+      {isQrFlow ? (
+        <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm">
+          <p className="font-semibold text-primary">QR invite — attendee only</p>
+          <p className="mt-1 text-xs text-muted-foreground">You&apos;re joining via QR. You&apos;ll be registered as an attendee for <span className="font-medium text-ink">{qrEventData?.event?.title || "this event"}</span>. Organization accounts can&apos;t be created via QR.</p>
+        </div>
+      ) : (
+        <div
+          className={`grid grid-cols-2 gap-2 rounded-xl border border-border bg-muted/40 p-1 transition ${
+            orgSuccess ? "pointer-events-none opacity-60" : ""
           }`}
         >
-          <UserRound className="size-4" /> Attendee
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("organization")}
-          className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold transition-all ${
-            mode === "organization"
-              ? "bg-card text-ink shadow-sm"
-              : "text-muted-foreground hover:text-ink"
-          }`}
-        >
-          <Building2 className="size-4" /> Organization
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={() => setMode("attendee")}
+            className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold transition-all ${
+              mode === "attendee" ? "bg-card text-ink shadow-sm" : "text-muted-foreground hover:text-ink"
+            }`}
+          >
+            <UserRound className="size-4" /> Attendee
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("organization")}
+            className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold transition-all ${
+              mode === "organization"
+                ? "bg-card text-ink shadow-sm"
+                : "text-muted-foreground hover:text-ink"
+            }`}
+          >
+            <Building2 className="size-4" /> Organization
+          </button>
+        </div>
+      )}
 
-      {mode === "attendee" ? (
+      {alreadyAuthed ? (
+        <div className="mt-6 rounded-xl border border-border bg-card p-6 text-center">
+          <p className="text-sm font-semibold text-ink">You&apos;re already logged in</p>
+          <p className="mt-1 text-xs text-muted-foreground">Log out to create a new account, or continue to where you were headed.</p>
+          <div className="mt-4 flex flex-col gap-2">
+            {isQrFlow && eventIdFromRedirect ? (
+              <Link
+                href={`/event/${eventIdFromRedirect}?qr=1`}
+                className="inline-flex items-center justify-center rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground hover:opacity-90"
+              >
+                Go to event
+              </Link>
+            ) : (
+              <Link
+                href={(currentUserData?.user && roleRoutes[currentUserData.user.role]) || "/dashboard"}
+                className="inline-flex items-center justify-center rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground hover:opacity-90"
+              >
+                Go to dashboard
+              </Link>
+            )}
+            <button
+              type="button"
+              onClick={() => logout()}
+              className="rounded-xl border border-border px-4 py-3 text-sm font-medium hover:bg-muted"
+            >
+              Log out
+            </button>
+          </div>
+        </div>
+      ) : mode === "attendee" ? (
         <form className="mt-6 space-y-5" onSubmit={handleAttendeeSubmit}>
           {eventIdFromRedirect && <JoiningEventBanner eventId={eventIdFromRedirect} />}
           {errorMessage(registerMutation) && (
@@ -182,27 +245,37 @@ export default function RegisterPage() {
             <Field label="Confirm Password" type="password" placeholder="••••••••" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
           </div>
 
-          <div className="auth-field">
-            <label className="text-sm font-medium text-ink">Organization</label>
-            <select
-              value={organizationId}
-              onChange={(e) => setOrganizationId(e.target.value)}
-              className="mt-1.5 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-ink outline-none transition-all focus:border-primary focus:ring-4 focus:ring-primary/10"
-            >
-              <option value="">
-                {orgsLoading ? "Loading organizations..." : "Select an organization"}
-              </option>
-              {organizations.map((org) => (
-                <option key={org._id} value={org._id}>
-                  {org.name}
+          {isQrFlow ? (
+            <div className="auth-field">
+              <label className="text-sm font-medium text-ink">Organization</label>
+              <div className="mt-1.5 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm">
+                <span className="font-medium text-ink">{qrEventData?.event ? (typeof qrEventData.event.organization === "string" ? qrEventData.event.organization : (qrEventData.event.organization as any)?.name || "Event organization") : "Loading event organization..."}</span>
+                <p className="mt-1 text-xs text-muted-foreground">Locked to scanned event — you&apos;ll join this organization as attendee. No role switch.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="auth-field">
+              <label className="text-sm font-medium text-ink">Organization</label>
+              <select
+                value={organizationId}
+                onChange={(e) => setOrganizationId(e.target.value)}
+                className="mt-1.5 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-ink outline-none transition-all focus:border-primary focus:ring-4 focus:ring-primary/10"
+              >
+                <option value="">
+                  {orgsLoading ? "Loading organizations..." : "Select an organization"}
                 </option>
-              ))}
-            </select>
-            <p className="mt-2 text-xs text-muted-foreground">
-              You&apos;ll join as an attendee. Organizer and admin accounts are granted by your organization&apos;s
-              admin.
-            </p>
-          </div>
+                {organizations.map((org) => (
+                  <option key={org._id} value={org._id}>
+                    {org.name}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-2 text-xs text-muted-foreground">
+                You&apos;ll join as an attendee. Organizer and admin accounts are granted by your organization&apos;s
+                admin.
+              </p>
+            </div>
+          )}
 
           <button
             type="submit"
@@ -333,5 +406,21 @@ export default function RegisterPage() {
         </p>
       )}
     </AuthShell>
+  )
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense
+      fallback={
+        <AuthShell heading="Create your account" sub="Set up your EventNexus workspace in minutes.">
+          <div className="flex justify-center py-8">
+            <Loader2 className="size-6 animate-spin text-primary" />
+          </div>
+        </AuthShell>
+      }
+    >
+      <RegisterPageInner />
+    </Suspense>
   )
 }

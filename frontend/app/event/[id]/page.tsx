@@ -4,7 +4,7 @@ import { use } from "react"
 import { RoleEventDetail } from "@/components/app/role-event-detail"
 import { PublicEventLanding } from "@/components/app/public-event-landing"
 import { useCurrentUser } from "@/lib/queries/auth"
-import { useHasToken } from "@/lib/hooks/use-has-token"
+import { useHasTokenWithChecked } from "@/lib/hooks/use-has-token"
 
 // This is the URL the event's public QR/poster (event-qr-poster.tsx) and
 // every "share this event" link point at, so it's the page a first-time,
@@ -24,12 +24,28 @@ import { useHasToken } from "@/lib/hooks/use-has-token"
 // authenticated attendee — that logic isn't duplicated here.
 export default function EventDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  const hasToken = useHasToken()
-  const { data: userData } = useCurrentUser()
+  const { hasToken, checked } = useHasTokenWithChecked()
+  const { data: userData, isLoading, isError } = useCurrentUser()
   const user = userData?.user
 
-  if (!hasToken) {
+  if (!checked) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="size-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    )
+  }
+
+  if (!hasToken || (isError && !user)) {
     return <PublicEventLanding eventId={id} />
+  }
+
+  if (hasToken && isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="size-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    )
   }
 
   const role =

@@ -21,32 +21,38 @@ import { Reveal } from "@/components/anim/reveal"
 import { useMarkNotificationRead, useNotification } from "@/lib/queries/notifications"
 import type { Notification as NotificationType } from "@/lib/api/notifications"
 
-const iconForType: Record<NotificationType["type"], typeof Bell> = {
+const iconForType: Record<string, typeof Bell> = {
   registration: CalendarCheck2,
   reminder: Bell,
   "event-update": Info,
   system: Sparkles,
   "nearby-event": MapPin,
+  "new-event": Sparkles,
+  "event_published": Sparkles,
   "check-in": UserCheck,
   collaboration: Network,
 }
 
-const toneForType: Record<NotificationType["type"], string> = {
+const toneForType: Record<string, string> = {
   registration: "text-primary bg-primary/12",
   reminder: "text-flame bg-flame/12",
   "event-update": "text-secondary bg-secondary/15",
   system: "text-primary bg-primary/12",
   "nearby-event": "text-flame bg-flame/12",
+  "new-event": "text-primary bg-primary/12",
+  "event_published": "text-primary bg-primary/12",
   "check-in": "text-secondary bg-secondary/15",
   collaboration: "text-primary bg-primary/12",
 }
 
-const labelForType: Record<NotificationType["type"], string> = {
+const labelForType: Record<string, string> = {
   registration: "Registration",
   reminder: "Reminder",
   "event-update": "Event update",
   system: "System",
   "nearby-event": "Nearby event",
+  "new-event": "New event",
+  "event_published": "New event",
   "check-in": "Check-in",
   collaboration: "Collaboration",
 }
@@ -67,7 +73,15 @@ export function NotificationDetail({ basePath }: { basePath: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notice?._id, notice?.read])
 
-  if (isLoading || !notice) {
+  if (!id) {
+    return (
+      <div className="rounded-2xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        Invalid notification.
+      </div>
+    )
+  }
+
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center gap-2 rounded-2xl border border-border bg-card py-16 text-sm text-muted-foreground">
         <Loader2 className="size-4 animate-spin text-primary" /> Loading notification...
@@ -75,7 +89,7 @@ export function NotificationDetail({ basePath }: { basePath: string }) {
     )
   }
 
-  if (isError) {
+  if (isError || !notice) {
     return (
       <div className="rounded-2xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
         This notification could not be found.
@@ -83,7 +97,7 @@ export function NotificationDetail({ basePath }: { basePath: string }) {
     )
   }
 
-  const Icon = iconForType[notice.type]
+  const Icon = (iconForType[notice.type] as typeof Bell) || Bell
   const event = notice.event
   const metadata = notice.data
 
@@ -159,14 +173,18 @@ export function NotificationDetail({ basePath }: { basePath: string }) {
             </Link>
           )}
 
-          {notice.link && (
-            <Link
-              href={notice.link}
-              className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-[0_8px_20px_-10px_rgba(91,76,245,0.8)] transition-transform hover:-translate-y-0.5"
-            >
-              <ExternalLink className="size-4" /> Open related page
-            </Link>
-          )}
+          {notice.link && (() => {
+            const safe = /^\/[a-z0-9/_\-?=&]+$/i.test(notice.link) && !notice.link.startsWith("//") && !/^(javascript|data|vbscript):/i.test(notice.link)
+            const href = safe ? notice.link : basePath
+            return (
+              <Link
+                href={href}
+                className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-[0_8px_20px_-10px_rgba(91,76,245,0.8)] transition-transform hover:-translate-y-0.5"
+              >
+                <ExternalLink className="size-4" /> Open related page
+              </Link>
+            )
+          })()}
 
           {metadata && (
             <div className="rounded-xl border border-border bg-background px-4 py-3">

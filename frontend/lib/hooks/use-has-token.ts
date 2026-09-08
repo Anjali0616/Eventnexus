@@ -16,11 +16,44 @@ import { useEffect, useState } from "react";
 // output, so that first-paint mismatch throws a hydration error and forces
 // a full client re-render. Starting both renders at `false` keeps the first
 // paint identical; the effect-driven flip afterwards is a normal state
-// update, not a hydration diff.
+// update, not a hydration diff. Polling + storage listener keeps same-tab
+// writes (storeSession) in sync without reload.
 export function useHasToken() {
   const [hasToken, setHasToken] = useState(false);
   useEffect(() => {
-    setHasToken(!!localStorage.getItem("token"));
+    const check = () => setHasToken(!!localStorage.getItem("token"));
+    check();
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "token") check();
+    };
+    window.addEventListener("storage", onStorage);
+    const interval = setInterval(check, 1000);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      clearInterval(interval);
+    };
   }, []);
   return hasToken;
+}
+
+export function useHasTokenWithChecked() {
+  const [hasToken, setHasToken] = useState(false);
+  const [checked, setChecked] = useState(false);
+  useEffect(() => {
+    const check = () => {
+      setHasToken(!!localStorage.getItem("token"));
+      setChecked(true);
+    };
+    check();
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "token") check();
+    };
+    window.addEventListener("storage", onStorage);
+    const interval = setInterval(check, 1000);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      clearInterval(interval);
+    };
+  }, []);
+  return { hasToken, checked };
 }

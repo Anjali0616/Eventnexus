@@ -23,7 +23,7 @@ export function EventCard({
   isRegistered?: boolean;
   isJoining?: boolean;
 }) {
-  const pct = Math.round((event.registered / event.capacity) * 100)
+  const pct = event.capacity > 0 ? Math.round((event.registered / event.capacity) * 100) : 0
   const isFree = event.price === "Free" || event.price === "Rs. 0" || event.price === "$0"
   const isPast = event.status === "Past"
   const isFull = event.registered >= event.capacity
@@ -77,7 +77,7 @@ export function EventCard({
               <span className="font-mono">{pct}%</span>
             </div>
             <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
-              <div className="bg-brand-gradient h-full rounded-full" style={{ width: `${pct}%` }} />
+              <div className="bg-brand-gradient h-full rounded-full" style={{ width: `${Math.min(100, pct)}%` }} />
             </div>
           </div>
         </div>

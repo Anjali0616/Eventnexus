@@ -82,6 +82,16 @@ ticketSchema.index(
   { event: 1, attendee: 1 },
   { unique: true, partialFilterExpression: { active: true } }
 );
+ticketSchema.index({ attendee: 1, createdAt: -1 });
+ticketSchema.index({ event: 1, attendee: 1 });
+ticketSchema.index({ attendee: 1, status: 1 });
+ticketSchema.index({ event: 1, status: 1 });
+ticketSchema.index({ "payment.stripeSessionId": 1 }, { sparse: true });
+ticketSchema.index({ "payment.stripePaymentIntentId": 1 }, { sparse: true });
+ticketSchema.index({ "payment.esewaTransactionUuid": 1 }, { sparse: true });
+ticketSchema.index({ "payment.esewaRefId": 1 }, { sparse: true });
+ticketSchema.index({ "payment.status": 1 });
+ticketSchema.index({ "payment.provider": 1 });
 
 ticketSchema.pre("save", function (next) {
   this.active = this.status !== "cancelled";

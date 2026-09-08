@@ -16,7 +16,8 @@ const stripe = process.env.STRIPE_SECRET_KEY
   ? new Stripe(process.env.STRIPE_SECRET_KEY)
   : null;
 
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
+const FRONTEND_URL = (process.env.FRONTEND_URL || "http://localhost:3000").split(",")[0].trim().replace(/\/$/, "");
+const BACKEND_URL = (process.env.BACKEND_URL || process.env.API_BASE_URL || "").split(",")[0].trim().replace(/\/$/, "") || null;
 
 // eSewa is always available: unlike Stripe it needs no live secret key to
 // exercise end-to-end, since utils/esewa.js falls back to eSewa's own
@@ -72,32 +73,46 @@ const createCheckoutSession = async (req, res) => {
     const chargeCurrency = isNpr ? "usd" : originalCurrency.toLowerCase();
     const chargeAmount = isNpr ? nprToUsd(event.price.amount) : event.price.amount;
 
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      payment_method_types: ["card"],
-      customer_email: req.user.email,
-      line_items: [
-        {
-          price_data: {
-            currency: chargeCurrency,
-            product_data: {
-              name: event.title,
-              description: isNpr
-                ? `Ticket for ${event.title} on ${new Date(event.date).toDateString()} (converted from Rs. ${event.price.amount})`
-                : `Ticket for ${event.title} on ${new Date(event.date).toDateString()}`,
+    // Idempotency: prevent double Stripe sessions on retry/double-click (S4)
+    const crypto = require("crypto");
+    const idempotencyKey = crypto
+      .createHash("sha256")
+      .update(`${event._id.toString()}:${req.user._id.toString()}:${event.price.amount}:${event.price.currency || "NPR"}`)
+      .digest("hex")
+      .slice(0, 32);
+    const session = await stripe.checkout.sessions.create(
+      {
+        mode: "payment",
+        payment_method_types: ["card"],
+        customer_email: req.user.email,
+        line_items: [
+          {
+            price_data: {
+              currency: chargeCurrency,
+              product_data: {
+                name: event.title.slice(0, 100),
+                description: (isNpr
+                  ? `Ticket for ${event.title} on ${new Date(event.date).toDateString()} (converted from Rs. ${event.price.amount})`
+                  : `Ticket for ${event.title} on ${new Date(event.date).toDateString()}`
+                ).slice(0, 500),
+              },
+              unit_amount: Math.round(chargeAmount * 100),
             },
-            unit_amount: Math.round(chargeAmount * 100),
+            quantity: 1,
           },
-          quantity: 1,
+        ],
+        metadata: {
+          eventId: event._id.toString(),
+          attendeeId: req.user._id.toString(),
+          expectedAmount: String(Math.round(chargeAmount * 100)),
+          expectedCurrency: chargeCurrency,
         },
-      ],
-      metadata: {
-        eventId: event._id.toString(),
-        attendeeId: req.user._id.toString(),
+        success_url: `${FRONTEND_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${FRONTEND_URL}/events/${event._id}?checkout=cancelled`,
+        client_reference_id: req.user._id.toString(),
       },
-      success_url: `${FRONTEND_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${FRONTEND_URL}/events/${event._id}?checkout=cancelled`,
-    });
+      { idempotencyKey }
+    );
 
     res.json({ url: session.url, chargeAmount, chargeCurrency: chargeCurrency.toUpperCase() });
   } catch (error) {
@@ -321,7 +336,13 @@ const initiateEsewaPayment = async (req, res) => {
       return res.status(400).json({ message: "Already registered for this event" });
     }
 
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    // eSewa only supports NPR — reject non-NPR events early
+    const currency = (event.price.currency || "NPR").toUpperCase();
+    if (currency !== "NPR") {
+      return res.status(400).json({ message: "eSewa only supports NPR events — use card payment for this event" });
+    }
+
+    const baseUrl = BACKEND_URL || `${req.protocol}://${req.get("host")}`;
     const { action, fields } = esewa.buildPaymentForm({
       amount: event.price.amount,
       eventId: event._id.toString(),
@@ -411,6 +432,19 @@ const confirmEsewaPayment = async (raw, source) => {
   ]);
   if (!eventDoc || !attendee) return { ok: false, reason: "not_found" };
 
+  // Cross-check amount matches event price to prevent underpayment via
+  // tampered signed payload + UAT secret. Use integer paisa to avoid float issues.
+  const decodedAmount = esewa.toAmountNumber(decoded.total_amount);
+  const expectedAmount = Number(eventDoc.price?.amount);
+  if (!Number.isFinite(decodedAmount) || !Number.isFinite(expectedAmount)) {
+    console.error(`[esewa:${source}] amount invalid: decoded=${decodedAmount} expected=${expectedAmount}`);
+    return { ok: false, reason: "amount_mismatch" };
+  }
+  if (Math.round(decodedAmount * 100) !== Math.round(expectedAmount * 100)) {
+    console.error(`[esewa:${source}] amount mismatch: decoded=${decodedAmount} expected=${expectedAmount}`);
+    return { ok: false, reason: "amount_mismatch" };
+  }
+
   let ticket = await Ticket.findOne({
     event: eventId,
     attendee: attendeeId,
@@ -473,16 +507,17 @@ const confirmEsewaPayment = async (raw, source) => {
 };
 
 const handleEsewaSuccess = async (req, res) => {
-  const eventIdParam = req.params.eventId ? `&eventId=${req.params.eventId}` : "";
+  const rawEventId = req.params.eventId;
+  const eventIdParam = rawEventId && /^[0-9a-fA-F]{24}$/.test(String(rawEventId)) ? `&eventId=${encodeURIComponent(String(rawEventId))}` : "";
   try {
     const result = await confirmEsewaPayment(req.query.data, "success");
     if (result.ok) {
       return res.redirect(
-        `${FRONTEND_URL}/checkout/success?provider=esewa&ticketId=${result.ticket._id}`
+        `${FRONTEND_URL}/checkout/success?provider=esewa&ticketId=${encodeURIComponent(String(result.ticket._id))}`
       );
     }
     res.redirect(
-      `${FRONTEND_URL}/checkout/success?provider=esewa&error=${result.reason}${eventIdParam}`
+      `${FRONTEND_URL}/checkout/success?provider=esewa&error=${encodeURIComponent(String(result.reason))}${eventIdParam}`
     );
   } catch (error) {
     console.error("[esewa] success handling failed:", error.message);
@@ -498,7 +533,8 @@ const handleEsewaSuccess = async (req, res) => {
 // transaction reports a failure, and it reports eSewa's actual reason rather
 // than always claiming the user cancelled.
 const handleEsewaFailure = async (req, res) => {
-  const eventIdParam = req.params.eventId ? `&eventId=${req.params.eventId}` : "";
+  const rawEventId = req.params.eventId;
+  const eventIdParam = rawEventId && /^[0-9a-fA-F]{24}$/.test(String(rawEventId)) ? `&eventId=${encodeURIComponent(String(rawEventId))}` : "";
   try {
     if (req.query.data) {
       const result = await confirmEsewaPayment(req.query.data, "failure");
@@ -507,11 +543,11 @@ const handleEsewaFailure = async (req, res) => {
           "[esewa:failure] eSewa sent a COMPLETED payment to failure_url — ticket issued anyway"
         );
         return res.redirect(
-          `${FRONTEND_URL}/checkout/success?provider=esewa&ticketId=${result.ticket._id}`
+          `${FRONTEND_URL}/checkout/success?provider=esewa&ticketId=${encodeURIComponent(String(result.ticket._id))}`
         );
       }
       return res.redirect(
-        `${FRONTEND_URL}/checkout/success?provider=esewa&error=${result.reason}${eventIdParam}`
+        `${FRONTEND_URL}/checkout/success?provider=esewa&error=${encodeURIComponent(String(result.reason))}${eventIdParam}`
       );
     }
     // No payload at all — genuinely nothing to verify (the user backed out

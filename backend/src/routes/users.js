@@ -68,6 +68,13 @@ router.patch(
   updateMyPassword
 );
 
+// Server-side saved events — available to every authenticated role.
+// Must be declared BEFORE /:id routes (Express matches sequentially; /:id
+// would capture "me" otherwise).
+router.get("/me/saved-events", protect, getMySavedEvents);
+router.post("/me/saved-events/:eventId", protect, addSavedEvent);
+router.delete("/me/saved-events/:eventId", protect, removeSavedEvent);
+
 router.get("/", protect, requireRole("admin", "org_admin"), listOrgUsers);
 router.get("/stats", protect, requireRole("admin", "org_admin"), getOrgStats);
 
@@ -121,10 +128,6 @@ router.delete(
   removeUser
 );
 
-// Server-side saved events — available to every authenticated role.
-router.get("/me/saved-events", protect, getMySavedEvents);
-router.post("/me/saved-events/:eventId", protect, addSavedEvent);
-router.delete("/me/saved-events/:eventId", protect, removeSavedEvent);
 router.post(
   "/",
   protect,

@@ -23,9 +23,14 @@ let io = null;
 const initSocket = (server) => {
   if (io) return io;
 
+  const allowedSocketOrigins = (process.env.FRONTEND_URL || "http://localhost:3000")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
   io = new Server(server, {
+    path: "/api/socket.io",
     cors: {
-      origin: process.env.FRONTEND_URL || "http://localhost:3000",
+      origin: allowedSocketOrigins.length === 1 ? allowedSocketOrigins[0] : allowedSocketOrigins,
       credentials: true,
     },
     // Forced polling → websocket upgrade keeps the connection alive reliably
@@ -44,8 +49,18 @@ const initSocket = (server) => {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const user = await User.findById(decoded.id);
       if (!user) return next(new Error("User not found"));
+      if (user.active === false) return next(new Error("Account disabled"));
       if ((decoded.ver ?? 0) !== (user.tokenVersion ?? 0)) {
         return next(new Error("Session invalidated, please log in again"));
+      }
+      // Enforce org approval gate for socket as well — disabled/suspended org
+      // users with still-valid JWT (7d) must not keep a live socket.
+      if (user.organization) {
+        const Organization = require("../models/Organization");
+        const org = await Organization.findById(user.organization).lean();
+        if (org && ["pending", "suspended", "rejected"].includes(org.status)) {
+          return next(new Error("Organization not approved"));
+        }
       }
       socket.userId = user._id.toString();
       next();

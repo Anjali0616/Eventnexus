@@ -20,10 +20,12 @@ import { NotificationBell } from "@/components/app/notification-bell"
 import { ensureGsap, prefersReducedMotion } from "@/lib/gsap"
 import { useUnreadCount } from "@/lib/queries/notifications"
 import { useCurrentUser, useLogout } from "@/lib/queries/auth"
+import { useHasTokenWithChecked } from "@/lib/hooks/use-has-token"
 import { canAccessPath } from "@/lib/route-access"
 import { NotFoundScreen } from "@/components/app/not-found-screen"
 import { LocationPrompt } from "@/components/app/location-prompt"
 import { useChatbotStore } from "@/lib/stores/chatbot-store"
+import { Loader2 } from "lucide-react"
 
 export type NavItem = { label: string; href: string; icon: LucideIcon; badge?: number }
 
@@ -146,8 +148,10 @@ export function AppShell({ children, role, userName, title = "Welcome back" }: A
   // dismissible banner that let an unverified user keep using every page
   // regardless — now it's a hard block: render nothing from this shell
   // (not even a flash of it) and redirect to the holding page instead.
-  const { data: userData } = useCurrentUser()
+  const { data: userData, isLoading: userLoading } = useCurrentUser()
   const currentUser = userData?.user
+  const { hasToken, checked } = useHasTokenWithChecked()
+  const isAuthLoading = checked && hasToken && userLoading
   const needsVerification = !!currentUser && !currentUser.googleAccount && !currentUser.emailVerified
 
   useEffect(() => {
@@ -159,11 +163,13 @@ export function AppShell({ children, role, userName, title = "Welcome back" }: A
   // redirecting: a silent bounce looks like the click did nothing, and
   // showing the page chrome with an apologetic banner — as this used to —
   // leaks the title and purpose of a console the caller isn't entitled to.
-  const pathAllowed = !currentUser || canAccessPath(currentUser.role, pathname)
+  // While auth is loading (hasToken true but user still fetching), don't
+  // decide access yet — avoids flash of wrong role / premature 404.
+  const pathAllowed = isAuthLoading ? true : !currentUser ? canAccessPath("attendee", pathname) : canAccessPath(currentUser.role, pathname)
 
   // Any reason to withhold the page body: unverified email, or a path this
   // role must not see.
-  const blocked = needsVerification || !pathAllowed
+  const blocked = needsVerification || (!isAuthLoading && !pathAllowed)
 
   // The chat panel's open state lives in the zustand store (with the whole
   // conversation), so switching pages keeps both the chat open and its
@@ -171,9 +177,16 @@ export function AppShell({ children, role, userName, title = "Welcome back" }: A
   const botOpen = useChatbotStore((s) => s.open)
   const setBotOpen = useChatbotStore((s) => s.setOpen)
   const aside = useRef<HTMLElement>(null)
-  // Identity from the session, not the URL (see ROLE_FOR_USER above). The
-  // `role` prop is only a fallback for the brief moment before the user
-  // query resolves, and for signed-out visitors on public pages.
+  // Identity from the session, not the URL (see ROLE_FOR_USER above).
+  // While auth is loading, keep showing a neutral loading state instead of
+  // flashing the prop role (e.g., Organizer flash for attendee).
+  if (isAuthLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="size-6 animate-spin text-primary" />
+      </div>
+    )
+  }
   const effectiveRole: AppShellProps["role"] = currentUser
     ? ROLE_FOR_USER[currentUser.role] ?? "Attendee"
     : role

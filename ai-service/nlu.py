@@ -20,7 +20,7 @@ only as an offline fallback for when this service is unreachable.
 
 import re
 
-_SINGLE_QUANTIFIER_RE = re.compile(r"\b(one|1|a|an|single|only one|just one|latest|next|nearest|newest|soonest)\b", re.I)
+_SINGLE_QUANTIFIER_RE = re.compile(r"\b(one|1|single|only one|just one|latest|next|nearest|newest|soonest)\b", re.I)
 _SINGULAR_EVENT_RE = re.compile(r"\bevent\b(?!s)", re.I)
 _PLURAL_EVENTS_RE = re.compile(r"\bevents\b", re.I)
 
@@ -29,8 +29,8 @@ _PAST_RE = re.compile(
     re.I,
 )
 
-_FREE_RE = re.compile(r"\bfree\b|no cost|complimentary|freebies", re.I)
-_PAID_RE = re.compile(r"\bpaid\b|pay\b|\bcosts?\b|\bprice\b", re.I)
+_FREE_RE = re.compile(r"\bfree\b|\bno cost\b|complimentary|\bfreebies\b", re.I)
+_PAID_RE = re.compile(r"\bpaid\b|\bpay\b|\bcosts?\b|\bprice\b", re.I)
 
 # An explicit number ("10 events", "top 5", "show 3") — distinct from the
 # binary quantity slot above (one vs. many): this is how MANY to return
@@ -56,8 +56,14 @@ def extract_quantity(message: str) -> str | None:
     return "one" if has_quantifier else None
 
 
+_UPCOMING_RE = re.compile(r"\b(upcoming|future|next|soon|forthcoming)\b", re.I)
+
 def extract_time_scope(message: str) -> str | None:
-    return "past" if _PAST_RE.search(message) else None
+    if _PAST_RE.search(message):
+        return "past"
+    if _UPCOMING_RE.search(message):
+        return "upcoming"
+    return None
 
 
 def extract_price_preference(message: str) -> str | None:

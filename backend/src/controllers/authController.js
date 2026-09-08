@@ -26,10 +26,9 @@ const REFRESH_TTL_MS = parseDuration(process.env.JWT_REFRESH_EXPIRES_IN, 30 * 24
 const EMAIL_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
 // Emails that are automatically granted the admin role on sign-in.
-// Configured via ADMIN_EMAILS; falls back to the project's default admin.
-const ADMIN_EMAILS = (
-  process.env.ADMIN_EMAILS || "anjaliimiishra321@gmail.com"
-)
+// Configured via ADMIN_EMAILS; no fallback — avoids leaking personal email
+// and prevents unintended privilege grant when env is missing.
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "")
   .split(",")
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
@@ -146,7 +145,7 @@ const sendVerificationEmail = async (user) => {
       name: user.name,
       link,
     },
-    metadata: { link, token },
+    metadata: { link },
   });
 };
 
@@ -540,27 +539,27 @@ const googleLogin = async (req, res) => {
         user.emailVerifiedAt = new Date();
         changed = true;
       }
-      // Promote allowlisted emails to system admin — but only ONCE (adminGrantedAt)
-      // and only for org-less accounts. Without the org check a tenant member
-      // (org_admin/organizer/attendee with an organization) whose email happens
-      // to be in ADMIN_EMAILS would be silently escalated to platform admin.
-      // System admins must remain organization-less (requireSystemAdmin).
-      if (admin && !user.adminGrantedAt && user.role !== "admin" && !user.organization) {
-        user.role = "admin";
-        user.adminGrantedAt = new Date();
-        changed = true;
-      }
+      // No silent role switch on login: allowlisted emails are NOT auto-promoted
+      // on re-login. Admin must be granted explicitly via PUT /users/:id/role.
+      // This prevents an attendee who is later added to ADMIN_EMAILS from
+      // silently becoming admin on next Google sign-in and seeing /admin.
+      // The adminGrantedAt check is kept for audit only, not for promotion.
       // Do NOT auto-assign an org to a system admin (admin without org).
       // System admins (role=admin, organization=null) must stay org-less so
       // requireSystemAdmin passes and they can approve tenants.
       if (changed) await user.save();
     } else {
+      // New Google users always start as attendee — even if email is in
+      // ADMIN_EMAILS, they must be promoted explicitly via admin panel.
+      // Prevents QR scan -> Google sign-up from instantly becoming admin and
+      // switching role away from attendee.
       user = new User({
         name: name || email.split("@")[0],
         email,
         googleId,
-        role: admin ? "admin" : "attendee",
-        adminGrantedAt: admin ? new Date() : undefined,
+        role: "attendee",
+        // adminGrantedAt is set only when explicitly promoted, not on creation
+        // Keep for audit if needed: admin ? new Date() : undefined (removed)
         // Google verified this email before issuing the ID token (checked
         // above) — brand-new Google sign-ups are verified on creation.
         emailVerifiedAt: new Date(),
@@ -633,6 +632,10 @@ const refresh = async (req, res) => {
       if (replayed) {
         const victim = await User.findById(replayed.user);
         await Session.updateMany({ user: replayed.user, revokedAt: null }, { revokedAt: new Date() });
+        if (victim) {
+          victim.tokenVersion = (victim.tokenVersion ?? 0) + 1;
+          await victim.save();
+        }
         console.warn(
           `[refresh] token reuse detected for ${replayed.user} — all sessions revoked`
         );
@@ -882,6 +885,8 @@ const resetPassword = async (req, res) => {
     user.password = password;
     user.passwordResetToken = undefined;
     user.passwordResetExpiresAt = undefined;
+    user.emailVerificationToken = undefined;
+    user.emailVerificationExpiresAt = undefined;
     // A password reset means any previously-issued credentials are suspect:
     // bump the token version (kills every outstanding JWT) and revoke every
     // refresh session so all devices must re-authenticate.
@@ -992,6 +997,7 @@ const deleteMyAccount = async (req, res) => {
     // Revoke all sessions immediately.
     await Session.updateMany({ user: user._id, revokedAt: null }, { revokedAt: new Date() });
 
+    const preDeleteOrg = user.organization;
     // Anonymize the user record (preserve _id for FK integrity).
     user.name = "Deleted User";
     user.email = `deleted-${user._id}@eventnexus.local`;
@@ -1029,7 +1035,7 @@ const deleteMyAccount = async (req, res) => {
     audit({
       req,
       user: { _id: user._id }, // minimal user object for audit
-      organization: user.organization ? { _id: user.organization } : undefined,
+      organization: preDeleteOrg ? { _id: preDeleteOrg } : undefined,
       action: "account_deleted",
       resourceType: "User",
       resourceId: user._id,

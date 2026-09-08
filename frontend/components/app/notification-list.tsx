@@ -4,28 +4,32 @@ import { useState } from "react"
 import Link from "next/link"
 import { Bell, CalendarCheck2, ChevronRight, Info, Loader2, MapPin, Network, Sparkles, UserCheck } from "lucide-react"
 import { Reveal } from "@/components/anim/reveal"
-import { useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications } from "@/lib/queries/notifications"
+import { useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications, useUnreadCount } from "@/lib/queries/notifications"
 import type { Notification } from "@/lib/api/notifications"
 import { SearchInput, FilterSelect } from "@/components/app/search-input"
 import { Pagination } from "@/components/app/pagination"
 import { useDebounce } from "@/lib/hooks/use-debounce"
 
-const iconForType: Record<Notification["type"], typeof Bell> = {
+const iconForType: Record<string, typeof Bell> = {
   registration: CalendarCheck2,
   reminder: Bell,
   "event-update": Info,
   system: Sparkles,
   "nearby-event": MapPin,
+  "new-event": Sparkles,
+  "event_published": Sparkles,
   "check-in": UserCheck,
   collaboration: Network,
 }
 
-const toneForType: Record<Notification["type"], string> = {
+const toneForType: Record<string, string> = {
   registration: "text-primary bg-primary/12",
   reminder: "text-flame bg-flame/12",
   "event-update": "text-secondary bg-secondary/15",
   system: "text-primary bg-primary/12",
   "nearby-event": "text-flame bg-flame/12",
+  "new-event": "text-primary bg-primary/12",
+  "event_published": "text-primary bg-primary/12",
   "check-in": "text-secondary bg-secondary/15",
   collaboration: "text-primary bg-primary/12",
 }
@@ -35,6 +39,7 @@ const typeFilterOptions = [
   { label: "Registrations", value: "registration" },
   { label: "Reminders", value: "reminder" },
   { label: "Event updates", value: "event-update" },
+  { label: "New events", value: "new-event" },
   { label: "Check-ins", value: "check-in" },
   { label: "System", value: "system" },
   { label: "Nearby events", value: "nearby-event" },
@@ -63,9 +68,10 @@ export function NotificationList({ basePath }: { basePath: string }) {
   })
   const markRead = useMarkNotificationRead()
   const markAllRead = useMarkAllNotificationsRead()
+  const { data: globalUnread = 0 } = useUnreadCount()
   const notifications = data?.notifications ?? []
   const pagination = data?.pagination
-  const unreadCount = notifications.filter((n) => !n.read).length
+  const unreadCount = (globalUnread as number) || notifications.filter((n) => !n.read).length
 
   return (
     <div className="space-y-6">
@@ -117,12 +123,14 @@ export function NotificationList({ basePath }: { basePath: string }) {
       ) : (
         <Reveal stagger={0.08} y={24} className="grid gap-5 lg:grid-cols-3">
           {notifications.map((notice) => {
-            const Icon = iconForType[notice.type]
+            const Icon = (iconForType[notice.type] as typeof Bell) || Bell
             return (
               <Link
                 key={notice._id}
                 href={`${basePath}/${notice._id}`}
-                onClick={() => !notice.read && markRead.mutate(notice._id)}
+                onClick={() => {
+                  if (!notice.read) markRead.mutate(notice._id)
+                }}
                 className={`group relative text-left rounded-2xl border p-6 shadow-[0_2px_24px_rgba(0,0,0,0.04)] transition-colors ${
                   notice.read ? "border-border bg-card" : "border-primary/30 bg-primary/[0.03]"
                 }`}

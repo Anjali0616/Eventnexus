@@ -106,11 +106,33 @@ const registerForEvent = async (req, res) => {
 
 const getMyTickets = async (req, res) => {
   try {
-    const { page, limit, skip } = parsePagination(req.query, { defaultLimit: 12 });
+    const { page, limit, skip } = parsePagination(req.query, { defaultLimit: 12, maxLimit: 50 });
     const filter = {
       attendee: req.user._id,
       ...buildFilters(req.query, ["status"]),
     };
+
+    // Role-aware time bucket (server-side, fixes pagination bug where client filtered only current page)
+    const timeBucket = String(req.query.timeBucket || req.query.bucket || "").toLowerCase();
+    if (timeBucket === "upcoming" || timeBucket === "past") {
+      const now = new Date();
+      const bucketEvents = await Event.find({
+        date: timeBucket === "upcoming" ? { $gt: now } : { $lte: now },
+      }).select("_id").lean();
+      const bucketIds = bucketEvents.map((e) => e._id);
+      // Intersect with existing event filter if any
+      if (filter.event && filter.event.$in) {
+        const existingSet = new Set(filter.event.$in.map(String));
+        filter.event = { $in: bucketIds.filter((id) => existingSet.has(String(id))) };
+      } else {
+        filter.event = { $in: bucketIds };
+      }
+      // If no events match bucket, short-circuit to empty result with counts
+      if (!filter.event.$in.length) {
+        const counts = await getMyTicketsCounts(req.user._id);
+        return res.json({ tickets: [], pagination: { page, limit, total: 0, totalPages: 0 }, counts });
+      }
+    }
 
     // Search by event title — resolve matching event ids first, then scope
     // the ticket query to them (the event is a populated ref, not inline).
@@ -119,10 +141,21 @@ const getMyTickets = async (req, res) => {
       const safe = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const rx = new RegExp(safe, "i");
       const events = await Event.find({ title: rx }).select("_id").lean();
-      filter.event = { $in: events.map((e) => e._id) };
+      const searchIds = events.map((e) => e._id);
+      if (filter.event && filter.event.$in) {
+        const bucketSet = new Set(filter.event.$in.map(String));
+        filter.event = { $in: searchIds.filter((id) => bucketSet.has(String(id))) };
+      } else {
+        filter.event = { $in: searchIds };
+      }
     }
 
-    const sort = parseSort(req.query.sort, ["createdAt"], { createdAt: -1 });
+    // Provider filter (for history)
+    if (req.query.provider && req.query.provider !== "all") {
+      filter["payment.provider"] = req.query.provider;
+    }
+
+    const sort = parseSort(req.query.sort, ["createdAt", "payment.amount"], { createdAt: -1 });
 
     const { data, pagination } = await paginate(Ticket, {
       filter,
@@ -132,11 +165,38 @@ const getMyTickets = async (req, res) => {
       sort,
       populate: "event",
     });
-    res.json({ tickets: data, pagination });
+
+    // Global counts for header (not just current page)
+    const counts = await getMyTicketsCounts(req.user._id);
+
+    res.json({ tickets: data, pagination, counts });
   } catch (error) {
     console.error("[error]", error);
     res.status(500).json({ success: false, message: "Something went wrong. Please try again.", code: "INTERNAL_ERROR" });
-}
+ }
+};
+
+// Helper for global counts (used by my-tickets header)
+const getMyTicketsCounts = async (userId) => {
+  try {
+    const all = await Ticket.find({ attendee: userId }).populate("event", "date").lean();
+    const now = Date.now();
+    let upcoming = 0, past = 0, cancelled = 0, checkedIn = 0, valid = 0;
+    for (const t of all) {
+      if (t.status === "cancelled") cancelled++;
+      else if (t.status === "checked-in") checkedIn++;
+      else if (t.status === "valid") valid++;
+      const ev = t.event;
+      const evDate = ev && ev.date ? new Date(ev.date).getTime() : null;
+      if (evDate != null && !Number.isNaN(evDate)) {
+        if (evDate > now) upcoming++;
+        else past++;
+      }
+    }
+    return { total: all.length, upcoming, past, cancelled, checkedIn, valid };
+  } catch {
+    return { total: 0, upcoming: 0, past: 0, cancelled: 0, checkedIn: 0, valid: 0 };
+  }
 };
 
 // Attendee self-service cancellation: only their own ticket, only before the
@@ -208,6 +268,9 @@ const verifyTicket = async (req, res) => {
     const ticket = await Ticket.findById(payload.ticketId).populate("event");
     if (!ticket || ticket.qrToken !== qrToken) {
       return res.status(404).json({ message: "Ticket not found" });
+    }
+    if (String(ticket.event?._id || ticket.event) !== String(payload.eventId) || String(ticket.attendee) !== String(payload.attendeeId)) {
+      return res.status(400).json({ message: "Ticket payload mismatch" });
     }
 
     // System admin (admin without org) may check in any ticket platform-wide,
@@ -346,28 +409,38 @@ const getEventAttendees = async (req, res) => {
 
     // Event-level counts (unaffected by page/search so the header stats stay
     // stable while the roster below filters).
-    const [total, checkedIn, cancelled, paidAgg, pendingAgg, refundedAgg, noneCount] =
+    const [total, checkedIn, cancelled, paidByCurrency, pendingByCurrency, refundedByCurrency, noneCount] =
       await Promise.all([
         Ticket.countDocuments({ event: event._id }),
         Ticket.countDocuments({ event: event._id, status: "checked-in" }),
         Ticket.countDocuments({ event: event._id, status: "cancelled" }),
         Ticket.aggregate([
           { $match: { event: event._id, status: { $ne: "cancelled" }, "payment.status": "paid" } },
-          { $group: { _id: null, count: { $sum: 1 }, amount: { $sum: "$payment.amount" } } },
+          { $group: { _id: "$payment.currency", count: { $sum: 1 }, amount: { $sum: "$payment.amount" } } },
         ]),
         Ticket.aggregate([
           { $match: { event: event._id, status: { $ne: "cancelled" }, "payment.status": "pending" } },
-          { $group: { _id: null, count: { $sum: 1 }, amount: { $sum: "$payment.amount" } } },
+          { $group: { _id: "$payment.currency", count: { $sum: 1 }, amount: { $sum: "$payment.amount" } } },
         ]),
         Ticket.aggregate([
           { $match: { event: event._id, "payment.status": "refunded" } },
-          { $group: { _id: null, count: { $sum: 1 }, amount: { $sum: { $ifNull: ["$payment.amountRefunded", 0] } } } },
+          { $group: { _id: "$payment.currency", count: { $sum: 1 }, amount: { $sum: { $ifNull: ["$payment.amountRefunded", 0] } } } },
         ]),
         Ticket.countDocuments({ event: event._id, status: { $ne: "cancelled" }, "payment.status": "none" }),
       ]);
-    const paid = paidAgg[0] ?? { count: 0, amount: 0 };
-    const pending = pendingAgg[0] ?? { count: 0, amount: 0 };
-    const refunded = refundedAgg[0] ?? { count: 0, amount: 0 };
+    // For backward compat, keep single-currency totals as sum (but also expose byCurrency for correct display)
+    const sumAgg = (arr) => arr.reduce((acc, cur) => ({ count: acc.count + cur.count, amount: acc.amount + cur.amount }), { count: 0, amount: 0 });
+    const paid = sumAgg(paidByCurrency);
+    const pending = sumAgg(pendingByCurrency);
+    const refunded = sumAgg(refundedByCurrency);
+    const byCurrency = (arr) => {
+      const out = {};
+      for (const r of arr) {
+        const cur = r._id || "NPR";
+        out[cur] = { count: r.count, amount: r.amount };
+      }
+      return out;
+    };
     const counts = {
       total,
       checkedIn,
@@ -382,6 +455,11 @@ const getEventAttendees = async (req, res) => {
         refunded: refunded.count,
         refundedAmount: refunded.amount,
         free: noneCount,
+        byCurrency: {
+          paid: byCurrency(paidByCurrency),
+          pending: byCurrency(pendingByCurrency),
+          refunded: byCurrency(refundedByCurrency),
+        },
       },
     };
 

@@ -110,7 +110,7 @@ export function useEventListState(initialState = {}) {
   };
 }
 
-// Mutation hooks
+// Mutation hooks — invalidate all event lists so org/advanced views stay fresh after publish
 export function useCreateEvent() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -118,6 +118,9 @@ export function useCreateEvent() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: eventKeys.my });
       queryClient.invalidateQueries({ queryKey: eventKeys.all });
+      queryClient.invalidateQueries({ queryKey: ["events", "org"] });
+      queryClient.invalidateQueries({ queryKey: ["events", "advanced"] });
+      queryClient.invalidateQueries({ queryKey: ["events", "my", "advanced"] });
       toast.success("Event created successfully!");
     },
     onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed to create event.")),
@@ -131,6 +134,9 @@ export function useUpdateEvent() {
       eventsApi.update(id, data),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: eventKeys.my });
+      queryClient.invalidateQueries({ queryKey: eventKeys.all });
+      queryClient.invalidateQueries({ queryKey: ["events", "org"] });
+      queryClient.invalidateQueries({ queryKey: ["events", "advanced"] });
       queryClient.invalidateQueries({ queryKey: eventKeys.detail(variables.id) });
       toast.success("Event updated!");
     },
@@ -145,6 +151,8 @@ export function useDeleteEvent() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: eventKeys.my });
       queryClient.invalidateQueries({ queryKey: eventKeys.all });
+      queryClient.invalidateQueries({ queryKey: ["events", "org"] });
+      queryClient.invalidateQueries({ queryKey: ["events", "advanced"] });
       toast.success("Event deleted.");
     },
     onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed to delete event.")),
@@ -157,17 +165,11 @@ export function useBulkUpdateEvents() {
 
   return useMutation({
     mutationFn: async ({ ids, data }: { ids: string[]; data: Partial<any> }) => {
-      // This would need a backend endpoint for bulk updates
-      // For now, we'll do sequential updates
+      const { eventsApi } = await import("../api/events");
       const results = [];
       for (const id of ids) {
-        const res = await fetch(`/api/events/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        });
-        if (!res.ok) throw new Error(`Failed to update ${id}`);
-        results.push(await res.json());
+        const res = await eventsApi.update(id, data);
+        results.push(res);
       }
       return results;
     },
@@ -183,11 +185,11 @@ export function useBulkDeleteEvents() {
 
   return useMutation({
     mutationFn: async (ids: string[]) => {
+      const { eventsApi } = await import("../api/events");
       const results = [];
       for (const id of ids) {
-        const res = await fetch(`/api/events/${id}`, { method: "DELETE" });
-        if (!res.ok) throw new Error(`Failed to delete ${id}`);
-        results.push(await res.json());
+        const res = await eventsApi.delete(id);
+        results.push(res);
       }
       return results;
     },

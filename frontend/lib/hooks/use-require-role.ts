@@ -1,9 +1,9 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useCurrentUser, roleRoutes } from "@/lib/queries/auth"
-import { TOKEN_KEY } from "@/lib/api/client"
+import { useHasTokenWithChecked } from "@/lib/hooks/use-has-token"
 import type { User } from "@/lib/api/auth"
 
 export type RoleGate = "loading" | "allowed" | "denied"
@@ -31,18 +31,7 @@ export type RoleGate = "loading" | "allowed" | "denied"
 // route), which is what actually protects the data.
 export function useRequireRole(allowed: string[]): { gate: RoleGate; user?: User } {
   const router = useRouter()
-
-  // Read the token in an effect, not during render: the server render has
-  // no localStorage, so reading it inline would desync the first client
-  // render from the server HTML and trip a hydration mismatch. `checked`
-  // distinguishes "no token" from "haven't looked yet" — without it the
-  // first render looks identical to signed-out and bounces to /login.
-  const [checked, setChecked] = useState(false)
-  const [hasToken, setHasToken] = useState(false)
-  useEffect(() => {
-    setHasToken(!!localStorage.getItem(TOKEN_KEY))
-    setChecked(true)
-  }, [])
+  const { hasToken, checked } = useHasTokenWithChecked()
 
   const { data, isError } = useCurrentUser()
   const user = data?.user

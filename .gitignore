@@ -22,3 +22,5 @@ ai-service/.env
 __pycache__/
 *.pyc
 infra/eventnexus-key-2026.pem
+infra/*.env
+!infra/*.env.example

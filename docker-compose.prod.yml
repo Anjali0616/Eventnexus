@@ -17,7 +17,7 @@ services:
     image: ghcr.io/${IMAGE_PREFIX:-ashokabbhattaraii/event}-backend:${IMAGE_TAG:-latest}
     container_name: eventnexus-backend
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
     env_file:
       - path: ./backend.env
         required: false
@@ -53,9 +53,7 @@ services:
     container_name: eventnexus-frontend
     ports:
       # Host 80 -> container 3000 so http://<EC2_IP>/ works without :3000
-      # Keep 3000 also mapped for direct health checks
       - "80:3000"
-      - "3000:3000"
     # Frontend NEXT_PUBLIC_* are baked at build; runtime env not needed for Next standalone
     # but keep file for future runtime config if needed
     env_file:

@@ -23,10 +23,15 @@ MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/eventnexus")
 _client = None
 
 
+import threading
+_db_lock = threading.Lock()
+
 def get_db():
     global _client
     if _client is None:
-        _client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=3000)
+        with _db_lock:
+            if _client is None:
+                _client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=3000, maxPoolSize=20, connectTimeoutMS=3000, socketTimeoutMS=10000)
     return _client.eventnexus
 
 
@@ -53,7 +58,11 @@ def load_upcoming_events(organization_id=None):
         "$or": [{"status": "Live"}, {"date": {"$gte": __now_iso()}}],
     }
     if organization_id:
-        query["organization"] = _oid(organization_id)
+        try:
+            query["organization"] = _oid(organization_id)
+        except Exception:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="Invalid organization_id")
     return list(
         get_db().events.find(
             query,
@@ -137,27 +146,32 @@ def load_collab_pairs():
         labels.append(1 if s.get("resolvedOutcome") == "co-hosted" else 0)
 
     # Mutual co-hosts currently in the events collection (positive only).
-    event_list = list(events_by_id.values())
-    for e in event_list:
+    # Optimized via org->events index to avoid O(n²) scan (was 100M iterations at 10k events).
+    if len(events_by_id) > 5000:
+        # Safety cap to prevent OOM on huge collections
+        print(f"[db] skipping mutual co-host scan: {len(events_by_id)} events exceeds cap")
+        return pairs, labels
+    from collections import defaultdict
+    org_to_events = defaultdict(list)
+    for ev in events_by_id.values():
+        org_to_events[str(ev.get("organization") or "")].append(ev)
+    for e in events_by_id.values():
         other_ids = [str(x) for x in (e.get("coHostOrganizations") or [])]
         if not other_ids:
             continue
-        for other in event_list:
-            if other.get("_id") == e.get("_id"):
-                continue
-            if str(other.get("organization")) not in other_ids:
-                continue
-            mutual = str(other.get("organization")) in other_ids and str(e.get("organization")) in [
-                str(x) for x in (other.get("coHostOrganizations") or [])
-            ]
-            if not mutual:
-                continue
-            key = "-".join(sorted([str(e.get("_id")), str(other.get("_id"))]))
-            if key in seen:
-                continue
-            seen.add(key)
-            pairs.append((attach(e), attach(other)))
-            labels.append(1)
+        for org_id in other_ids:
+            for other in org_to_events.get(org_id, []):
+                if other.get("_id") == e.get("_id"):
+                    continue
+                mutual = str(e.get("organization")) in [str(x) for x in (other.get("coHostOrganizations") or [])]
+                if not mutual:
+                    continue
+                key = "-".join(sorted([str(e.get("_id")), str(other.get("_id"))]))
+                if key in seen:
+                    continue
+                seen.add(key)
+                pairs.append((attach(e), attach(other)))
+                labels.append(1)
     return pairs, labels
 
 
@@ -177,7 +191,11 @@ def __now_iso():
 
 def _oid(value):
     from bson import ObjectId
+    from bson.errors import InvalidId
 
     if isinstance(value, ObjectId):
         return value
-    return ObjectId(str(value))
+    try:
+        return ObjectId(str(value))
+    except (InvalidId, TypeError, ValueError) as e:
+        raise ValueError(f"Invalid ObjectId: {value}") from e
