@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import {
   ArrowLeft,
   Calendar,
@@ -11,10 +11,17 @@ import {
   MapPin,
   Ticket,
   Users,
+  QrCode,
+  Sparkles,
+  Check,
+  Share2,
 } from "lucide-react"
 import { Reveal } from "@/components/anim/reveal"
 import { useEvent } from "@/lib/queries/events"
 import { formatPrice, isFreeEvent } from "@/lib/price"
+import { hasQrHint, buildShareText, buildWhatsAppUrl } from "@/lib/qr"
+import { useHasToken } from "@/lib/hooks/use-has-token"
+import { useCurrentUser } from "@/lib/queries/auth"
 
 // The landing experience for a signed-out visitor who scans an event's QR
 // code (see event-qr-poster.tsx) or opens its public link cold.
@@ -40,6 +47,11 @@ import { formatPrice, isFreeEvent } from "@/lib/price"
 // to use it.
 export function PublicEventLanding({ eventId }: { eventId: string }) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const isQrScan = hasQrHint(searchParams)
+  const hasToken = useHasToken()
+  const { data: userData } = useCurrentUser()
+  const currentUser = userData?.user
   const { data, isLoading, isError } = useEvent(eventId)
   const event = data?.event
 
@@ -69,7 +81,18 @@ export function PublicEventLanding({ eventId }: { eventId: string }) {
   const eventDate = new Date(event.date)
   const isPast = eventDate <= new Date()
   const isFull = event.registered >= event.capacity
-  const redirectParam = `?redirect=${encodeURIComponent(`/event/${eventId}`)}`
+  // Preserve QR context through auth flow so banner stays after login/register
+  const qrSuffix = isQrScan ? "?qr=1" : ""
+  const redirectParam = `?redirect=${encodeURIComponent(`/event/${eventId}${qrSuffix}`)}`
+  const handleJoinClick = () => {
+    // Already logged in — never create a new account or switch role.
+    // Send them straight to the authenticated event page where register happens as ticket, not account.
+    if (hasToken && currentUser) {
+      router.push(`/event/${eventId}${qrSuffix}`)
+      return
+    }
+    router.push(`/register${redirectParam}`)
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -93,6 +116,24 @@ export function PublicEventLanding({ eventId }: { eventId: string }) {
       </header>
 
       <div className="mx-auto max-w-3xl px-6 py-10">
+        {isQrScan && event && (
+          <Reveal>
+            <div className="mb-6 flex items-center gap-3 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3">
+              <span className="flex size-9 items-center justify-center rounded-xl bg-primary text-white">
+                <QrCode className="size-4" />
+              </span>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-ink flex items-center gap-1.5">
+                  <Sparkles className="size-3.5 text-primary" /> You scanned the QR for “{event.title}”
+                </p>
+                <p className="text-xs text-muted-foreground">Preview the event below and tap Join to register instantly. No extra steps.</p>
+              </div>
+              <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-xs font-medium text-primary border border-primary/20">
+                <Check className="size-3" /> QR verified
+              </span>
+            </div>
+          </Reveal>
+        )}
         <Reveal>
           {event.imageUrl && (
             <div className="mb-6 aspect-video w-full overflow-hidden rounded-2xl bg-muted">
@@ -175,6 +216,33 @@ export function PublicEventLanding({ eventId }: { eventId: string }) {
             )}
           </div>
 
+          {/* QR-aware quick details — when scanned, surface full event meta so user can decide before registering */}
+          {isQrScan && (
+            <div className="mt-6 rounded-2xl border border-border bg-card p-5">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-ink">
+                <QrCode className="size-4 text-primary" /> Scan & Go
+              </h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                This link came from a QR poster. You’re viewing the full event detail — venue, agenda, and registration — all in one place. No extra app needed.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  onClick={() => {
+                    const url = window.location.href
+                    if (navigator.share) navigator.share({ title: event.title, text: `Join me at ${event.title}`, url }).catch(() => {})
+                    else navigator.clipboard.writeText(url)
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                >
+                  <Share2 className="size-3.5" /> Share this event
+                </button>
+                <Link href={`/events`} className="inline-flex items-center gap-1.5 rounded-lg bg-muted px-3 py-1.5 text-xs font-medium hover:bg-muted/80">
+                  Explore more
+                </Link>
+              </div>
+            </div>
+          )}
+
           {/* One clear action. Registration itself (capacity, payment,
               ticket issuance) happens after auth, in RoleEventDetail — this
               button's only job is getting a signed-out visitor there and
@@ -191,12 +259,12 @@ export function PublicEventLanding({ eventId }: { eventId: string }) {
                   </p>
                 </div>
                 <button
-                  onClick={() => router.push(`/register${redirectParam}`)}
+                  onClick={handleJoinClick}
                   disabled={isPast || isFull}
                   className="flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground shadow-[0_8px_20px_-10px_rgba(91,76,245,0.8)] transition-transform hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-50"
                 >
                   <Ticket className="size-4" />
-                  {isPast ? "Event concluded" : isFull ? "Event full" : "Join Event"}
+                  {isPast ? "Event concluded" : isFull ? "Event full" : hasToken && currentUser ? "View Event & Register" : "Join Event"}
                 </button>
               </div>
             </div>

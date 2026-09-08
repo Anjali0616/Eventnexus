@@ -81,6 +81,10 @@ apiClient.interceptors.request.use((config) => {
 });
 
 let redirectingToLogin = false;
+// Reset guard when navigating away from login (avoids swallow after first 401)
+if (typeof window !== "undefined") {
+  window.addEventListener("popstate", () => { redirectingToLogin = false; });
+}
 
 // Endpoints where a 401 means "these credentials are wrong", NOT "your
 // session expired".

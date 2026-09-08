@@ -78,13 +78,12 @@ const parse = async (message, timeoutMs = 1500) => {
 // LLM-first understanding: ONE call reads the message + conversation history
 // and returns intent + every slot together (see ai-service/app.py's
 // /understand — the LLM is asked directly, not pattern-matched against).
-// This is the chatbot's PRIMARY way of understanding a message; timeout
-// matches generate()'s since it's the same underlying LLM round trip.
-// Returns null only when the AI service itself is unreachable — callers
-// then fall back to the local regex/rules pipeline, same as every other
-// AI-augmented feature in this app.
-const understand = async (message, history = [], timeoutMs = 45000) => {
-  const data = await call("/understand", { message, history }, timeoutMs);
+// Optimized for speed: 8s timeout with fast fallback to regex — user expects <2s,
+// not 45s. History is capped to 8 turns to keep prompt small.
+const understand = async (message, history = [], timeoutMs = 8000) => {
+  // keep payload small for speed
+  const trimmedHistory = Array.isArray(history) ? history.slice(-8) : [];
+  const data = await call("/understand", { message, history: trimmedHistory }, timeoutMs);
   if (!data?.intent) return null;
   return {
     intent: data.intent,
@@ -102,19 +101,17 @@ const understand = async (message, history = [], timeoutMs = 45000) => {
 // Unlike every other function here, a failed/unreachable AI service does
 // NOT return null — it falls back to calling Groq/Gemini directly from
 // Node (utils/aiProvider.js), so an LLM-dependent feature still works even
-// if the Python service itself is down. This mirrors the fallback these
-// callers already had before the AI service owned LLM calls; it just adds
-// a network hop as the *preferred* path rather than removing the safety
-// net. Timeout is generous (worst case: 2 providers x 2 retries x ~10s
-// each, entirely on the ai-service side).
-const generate = async (systemPrompt, userPrompt, history = [], timeoutMs = 45000) => {
+// if the Python service itself is down. Timeout trimmed to 10s for speed
+// (was 45s) — fallback to local LLM still happens fast.
+const generate = async (systemPrompt, userPrompt, history = [], timeoutMs = 10000) => {
+  const trimmedHistory = Array.isArray(history) ? history.slice(-6) : [];
   const data = await call(
     "/generate",
-    { system_prompt: systemPrompt, user_prompt: userPrompt, history },
+    { system_prompt: systemPrompt, user_prompt: userPrompt, history: trimmedHistory },
     timeoutMs
   );
   if (data?.reply) return data.reply;
-  return generateReplyLocal(systemPrompt, userPrompt, history);
+  return generateReplyLocal(systemPrompt, userPrompt, trimmedHistory);
 };
 
 // ML co-host likelihood for event pairs (the "advanced AI" half of the
@@ -132,9 +129,13 @@ const collaborationMatch = async (pairs, timeoutMs = 3000) => {
   return data.matches;
 };
 
-// Service + model health. Returns null when the AI service is unreachable
-// (app is then running in deterministic fallback mode).
+let _healthCache = null;
+let _healthCacheAt = 0;
+const HEALTH_TTL_MS = 15000;
+// Service + model health. Cached 15s to avoid hammering AI service on every
+// popular_events/capacity query (was called inline without cache).
 const health = async (timeoutMs = 1500) => {
+  if (_healthCache && Date.now() - _healthCacheAt < HEALTH_TTL_MS) return _healthCache;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -142,15 +143,18 @@ const health = async (timeoutMs = 1500) => {
     if (!res.ok) return null;
     const data = await res.json();
     const models = data?.models || {};
-    return {
+    const result = {
       online: true,
       attendance: !!models.attendance,
       cf: !!models.cf,
       intent: !!models.intent,
       collaboration: !!models.collaboration,
     };
+    _healthCache = result;
+    _healthCacheAt = Date.now();
+    return result;
   } catch {
-    return null;
+    return _healthCache || null;
   } finally {
     clearTimeout(timeout);
   }

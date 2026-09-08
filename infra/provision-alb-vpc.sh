@@ -19,7 +19,7 @@ get_subnet() {
 }
 get_sg() {
   local name=$1
-  aws ec2 describe-security-groups --filters Name=group-name,Values=$name --region $REGION --query "SecurityGroups[0].GroupId" --output text 2>/dev/null | grep -v None || echo ""
+  aws ec2 describe-security-groups --filters Name=group-name,Values=$name Name=vpc-id,Values=$VPC_ID --region $REGION --query "SecurityGroups[0].GroupId" --output text 2>/dev/null | grep -v None || echo ""
 }
 get_rt() {
   aws ec2 describe-route-tables --filters Name=tag:Name,Values=${TAG_PREFIX}-public-rt --region $REGION --query "RouteTables[0].RouteTableId" --output text 2>/dev/null | grep -v None || echo ""
@@ -117,9 +117,9 @@ SG_EC2_ID=$(get_sg $SG_EC2)
 if [ -z "$SG_EC2_ID" ]; then
   echo ">> Creating SG $SG_EC2"
   SG_EC2_ID=$(aws ec2 create-security-group --group-name $SG_EC2 --description "EC2 SG for EventNexus" --vpc-id $VPC_ID --region $REGION --tag-specifications "ResourceType=security-group,Tags=[{Key=Name,Value=$SG_EC2}]" --query "GroupId" --output text)
-  # SSH
+  # SSH — restrict to operator IP in production; 0.0.0.0/0 kept for initial setup
   aws ec2 authorize-security-group-ingress --group-id $SG_EC2_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 --region $REGION
-  # Allow ALB -> EC2 on app ports
+  # Allow ALB -> EC2 on app ports (ALB is the only public entry point)
   aws ec2 authorize-security-group-ingress --group-id $SG_EC2_ID --protocol tcp --port 80 --source-group $SG_ALB_ID --region $REGION
   aws ec2 authorize-security-group-ingress --group-id $SG_EC2_ID --protocol tcp --port 3000 --source-group $SG_ALB_ID --region $REGION
   aws ec2 authorize-security-group-ingress --group-id $SG_EC2_ID --protocol tcp --port 5000 --source-group $SG_ALB_ID --region $REGION
@@ -127,6 +127,13 @@ if [ -z "$SG_EC2_ID" ]; then
 else
   echo ">> Reusing EC2 SG $SG_EC2_ID"
 fi
+# Ensure app ports are NOT world-open (remove if previously added)
+for PORT in 3000 5000; do
+  aws ec2 revoke-security-group-ingress --group-id $SG_EC2_ID --protocol tcp --port $PORT --cidr 0.0.0.0/0 --region $REGION 2>/dev/null || true
+done
+# Ensure 80 world-open is only via ALB; direct 80 world-open removed unless operator explicitly needs it
+aws ec2 revoke-security-group-ingress --group-id $SG_EC2_ID --protocol tcp --port 80 --cidr 0.0.0.0/0 --region $REGION 2>/dev/null || true
+aws ec2 revoke-security-group-ingress --group-id $SG_EC2_ID --protocol tcp --port 443 --cidr 0.0.0.0/0 --region $REGION 2>/dev/null || true
 
 # Allow EC2 egress all (default already)
 echo ""

@@ -91,19 +91,42 @@ const createEvent = async (req, res) => {
     if (status && !EVENT_STATUSES.includes(status)) {
       return res.status(400).json({ message: `Invalid status — must be one of: ${EVENT_STATUSES.join(", ")}` });
     }
-    const eventDate = new Date(date);
-    if (isNaN(eventDate.getTime())) {
-      return res.status(400).json({ message: "Invalid event date" });
-    }
-    if (eventDate <= new Date()) {
-      return res.status(400).json({ message: "Event date must be in the future" });
-    }
-    if (eventDate.getTime() - Date.now() > MAX_FUTURE_EVENT_MS) {
-      return res.status(400).json({ message: "Event date can't be more than 2 years in the future" });
+    const isDraft = status === "Draft" || (!status && !date);
+    // Drafts are savable with minimal data — relax future-date, capacity, venue checks
+    let eventDate = null;
+    if (date) {
+      eventDate = new Date(date);
+      if (isNaN(eventDate.getTime())) {
+        return res.status(400).json({ message: "Invalid event date" });
+      }
+      if (!isDraft) {
+        if (eventDate <= new Date()) {
+          return res.status(400).json({ message: "Event date must be in the future" });
+        }
+        if (eventDate.getTime() - Date.now() > MAX_FUTURE_EVENT_MS) {
+          return res.status(400).json({ message: "Event date can't be more than 2 years in the future" });
+        }
+      } else if (status === "Past" && eventDate > new Date()) {
+        return res.status(400).json({ message: "Past event must have a past date" });
+      }
+    } else if (!isDraft) {
+      return res.status(400).json({ message: "Event date is required" });
     }
     const cap = Number(capacity);
-    if (!Number.isInteger(cap) || cap < 1) {
-      return res.status(400).json({ message: "Capacity must be a positive integer" });
+    if (!isDraft) {
+      if (!Number.isInteger(cap) || cap < 1) {
+        return res.status(400).json({ message: "Capacity must be a positive integer" });
+      }
+      if (cap > 1_000_000) {
+        return res.status(400).json({ message: "Capacity can't exceed 1,000,000" });
+      }
+      if (!venue || venue.trim().length < 2) {
+        return res.status(400).json({ message: "Venue is required" });
+      }
+    } else if (capacity != null && capacity !== "") {
+      if (!Number.isInteger(cap) || cap < 1) {
+        return res.status(400).json({ message: "Capacity must be a positive integer" });
+      }
     }
 
     const normalizedPrice = normalizePrice(price);
@@ -117,14 +140,21 @@ const createEvent = async (req, res) => {
       return res.status(403).json({ message: "System admins cannot create events — assign an organization or use an org_admin/organizer account" });
     }
 
+    // Draft defaults: fill minimal required fields so a quick "Save Draft" from step 1 works
+    const finalDate = eventDate || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const finalCapacity = Number.isInteger(cap) && cap >= 1 ? cap : 100;
+    const finalVenue = venue && String(venue).trim() ? String(venue).trim() : "TBA";
+    const finalCategory = category && String(category).trim() ? String(category).trim() : "Technology";
+    const finalType = type || "In-person";
+
     const event = await Event.create({
       title,
       description,
-      date: eventDate,
-      venue,
-      type,
-      category,
-      capacity: cap,
+      date: finalDate,
+      venue: finalVenue,
+      type: finalType,
+      category: finalCategory,
+      capacity: finalCapacity,
       status: status || "Draft",
       coordinates,
       imageUrl,
@@ -142,7 +172,10 @@ const createEvent = async (req, res) => {
       organization: req.user.organization,
       price: normalizedPrice,
     });
-    if (event.status !== "Draft") {
+    if (["Upcoming", "Live"].includes(event.status)) {
+      // Persistent bell notification to all attendees (UI notification button)
+      const { broadcastNewEvent } = require("../utils/eventPublishNotify");
+      broadcastNewEvent(event).catch((err) => console.error("[broadcast] failed:", err.message));
       notifyNearbyUsers(event).catch((err) =>
         console.error("[proximity-notify] failed:", err.message)
       );
@@ -332,7 +365,10 @@ const updateEvent = async (req, res) => {
     event.set(updates);
     await event.save();
 
-    if (wasDraft && event.status !== "Draft") {
+    const isPublishTransition = wasDraft && ["Upcoming", "Live"].includes(event.status);
+    if (isPublishTransition) {
+      const { broadcastNewEvent } = require("../utils/eventPublishNotify");
+      broadcastNewEvent(event).catch((err) => console.error("[broadcast] failed:", err.message));
       notifyNearbyUsers(event).catch((err) =>
         console.error("[proximity-notify] failed:", err.message)
       );

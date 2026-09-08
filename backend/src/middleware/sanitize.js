@@ -6,11 +6,13 @@
 // `filter[key] = req.query[key]` (see utils/query.js's buildFilters) would
 // otherwise pass that operator straight into a Mongo query unfiltered.
 const sanitize = (value, depth = 0) => {
-  if (value == null || depth > 6) return value;
+  if (value == null) return value;
+  if (depth > 6) return Array.isArray(value) ? [] : typeof value === "object" ? {} : value;
   if (Array.isArray(value)) return value.map((v) => sanitize(v, depth + 1));
   if (typeof value === "object") {
     const out = {};
     for (const [key, val] of Object.entries(value)) {
+      if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
       if (key.startsWith("$") || key.includes(".")) continue;
       out[key] = sanitize(val, depth + 1);
     }

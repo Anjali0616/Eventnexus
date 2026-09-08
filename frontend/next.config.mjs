@@ -4,7 +4,7 @@ const nextConfig = {
   // folder with traced deps (~80% smaller image). Keep for EC2 prod; local dev unaffected.
   output: "standalone",
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   images: {
     unoptimized: true,

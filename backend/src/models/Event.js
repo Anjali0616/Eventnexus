@@ -160,6 +160,14 @@ const eventSchema = new mongoose.Schema(
 );
 
 eventSchema.index({ "coordinates.geo": "2dsphere" });
+eventSchema.index({ status: 1, date: 1 });
+eventSchema.index({ date: 1 });
+eventSchema.index({ "price.amount": 1, status: 1, date: 1 });
+eventSchema.index({ registered: -1 });
+eventSchema.index({ category: 1, status: 1 });
+eventSchema.index({ title: "text" });
+eventSchema.index({ organization: 1, status: 1, date: 1 });
+eventSchema.index({ organization: 1, "coHostOrganizations": 1 });
 
 eventSchema.pre("save", function (next) {
   if (this.isModified("coordinates") && this.coordinates?.lat != null && this.coordinates?.lng != null) {

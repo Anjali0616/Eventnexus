@@ -7,6 +7,7 @@ import { CheckCircle2, CreditCard, Loader2, Ticket, XCircle } from "lucide-react
 import { AppShell } from "@/components/app/app-shell"
 import { Reveal } from "@/components/anim/reveal"
 import { useCheckoutStatus, useCreateCheckoutSession, usePaymentConfig } from "@/lib/queries/payments"
+import { useMyTickets } from "@/lib/queries/tickets"
 import { useCurrentUser } from "@/lib/queries/auth"
 
 // Offered after any eSewa failure/cancel (never after a confirmed success) —
@@ -54,9 +55,9 @@ function RetryWithStripe({ eventId }: { eventId: string }) {
 // eSewa's redirect already carries a confirmed outcome — by the time the
 // browser lands here the backend has verified the payment signature *and*
 // done a server-to-server status check, and only issues `ticketId` once the
-// ticket actually exists (see paymentController.handleEsewaSuccess). So
-// there's nothing to poll for eSewa, unlike Stripe where the webhook can
-// lag a beat behind the redirect.
+// ticket actually exists (see paymentController.handleEsewaSuccess). We
+// still verify the ticket belongs to the current user to prevent spoofed
+// ?ticketId= links from showing a false success.
 function EsewaResult({
   ticketId,
   error,
@@ -66,7 +67,39 @@ function EsewaResult({
   error: string | null
   eventId: string | null
 }) {
+  const { data: myTicketsData } = useMyTickets({ limit: 100 } as any)
+  const tickets = (myTicketsData as any)?.tickets ?? []
+  const isOwnTicket = ticketId ? tickets.some((t: any) => String(t._id) === String(ticketId)) : false
+  // Show verifying state while tickets load
+  const isVerifying = !!ticketId && !tickets.length && (myTicketsData as any) === undefined
+
   if (ticketId) {
+    if (isVerifying) {
+      return (
+        <>
+          <Loader2 className="mx-auto size-8 animate-spin text-primary" />
+          <h1 className="font-display mt-4 text-xl font-bold text-ink">Verifying payment…</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Checking your ticket…</p>
+        </>
+      )
+    }
+    if (!isOwnTicket && tickets.length > 0) {
+      return (
+        <>
+          <XCircle className="mx-auto size-10 text-amber-500" />
+          <h1 className="font-display mt-4 text-xl font-bold text-ink">Couldn&apos;t verify ticket</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            This ticket could not be verified for your account. If you just paid, check My Tickets in a moment or contact support.
+          </p>
+          <Link
+            href="/my-tickets"
+            className="mt-6 inline-flex items-center gap-2 rounded-xl border border-border px-5 py-3 text-sm font-medium text-ink hover:bg-muted"
+          >
+            Go to My Tickets
+          </Link>
+        </>
+      )
+    }
     return (
       <>
         <CheckCircle2 className="mx-auto size-10 text-secondary" />
@@ -102,6 +135,7 @@ function EsewaResult({
     missing_data: "eSewa didn't send any payment details back.",
     invalid_data: "eSewa's response couldn't be read.",
     bad_transaction: "This payment reference wasn't recognised.",
+    amount_mismatch: "Amount didn't match event price — ticket not issued. If you were charged, contact support.",
     server: "Something went wrong on our side while confirming the payment.",
   }
 

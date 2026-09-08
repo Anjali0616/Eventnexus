@@ -19,6 +19,18 @@ import os
 import time
 import urllib.error
 import urllib.request
+from dotenv import load_dotenv
+
+load_dotenv()
+
+def _get_groq_key():
+    return os.getenv("GROQ_API_KEY")
+def _get_groq_model():
+    return os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+def _get_gemini_key():
+    return os.getenv("GEMINI_API_KEY")
+def _get_gemini_model():
+    return os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
@@ -42,18 +54,20 @@ def _post_json(url: str, payload: dict, headers: dict | None = None, timeout: in
 
 
 def _call_groq(messages: list[dict]) -> str | None:
-    if not GROQ_API_KEY:
+    api_key = _get_groq_key() or GROQ_API_KEY
+    model = _get_groq_model()
+    if not api_key:
         return None
     data = _post_json(
         "https://api.groq.com/openai/v1/chat/completions",
         {
-            "model": GROQ_MODEL,
+            "model": model,
             "messages": messages,
             "temperature": 0.2,
             "max_tokens": 700,
             "top_p": 0.9,
         },
-        headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+        headers={"Authorization": f"Bearer {api_key}"},
     )
     choices = data.get("choices") or []
     if not choices:
@@ -63,11 +77,13 @@ def _call_groq(messages: list[dict]) -> str | None:
 
 
 def _call_gemini(messages: list[dict]) -> str | None:
-    if not GEMINI_API_KEY:
+    api_key = _get_gemini_key() or GEMINI_API_KEY
+    model = _get_gemini_model()
+    if not api_key:
         return None
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+        f"{model}:generateContent?key={api_key}"
     )
     # Gemini has no system role in v1beta — fold the system prompt into the
     # first user turn, same as aiProvider.js's callGemini.
@@ -76,9 +92,12 @@ def _call_gemini(messages: list[dict]) -> str | None:
         for m in messages
     ]
     if messages and messages[0]["role"] == "system":
-        second = messages[1]["content"] if len(messages) > 1 else ""
-        contents[0]["parts"] = [{"text": f"{messages[0]['content']}\n\n{second}"}]
-        del contents[1]
+        if len(messages) > 1:
+            second = messages[1]["content"] if len(messages) > 1 else ""
+            contents[0]["parts"] = [{"text": f"{messages[0]['content']}\n\n{second}"}]
+            del contents[1]
+        else:
+            contents[0]["parts"] = [{"text": messages[0]["content"]}]
 
     data = _post_json(
         url,

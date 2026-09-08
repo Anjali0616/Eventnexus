@@ -71,9 +71,10 @@ export function useRegister(redirectTo?: string | null) {
   return useMutation({
     mutationFn: (data: RegisterPayload) => authApi.register(data),
     onSuccess: (data: AuthResponse) => {
-      // org-admin pending flow returns message without token
-      if ((data as unknown as { message?: string })?.message?.includes("pending")) {
+      // org-admin pending flow returns message without token — do not store session
+      if ((data as unknown as { message?: string })?.message?.includes("pending") && !(data as unknown as { token?: string })?.token) {
         toast.success("Application submitted! Check your email for verification.");
+        return;
       }
       onSuccess(data);
     },

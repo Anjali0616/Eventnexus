@@ -1,7 +1,7 @@
 "use client"
 
 import { useRef, useState } from "react"
-import { notFound, useRouter } from "next/navigation"
+import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import {
   ArrowLeft,
@@ -21,6 +21,7 @@ import {
   MapPin,
   Phone,
   Plus,
+  QrCode as QrIcon,
   RotateCcw,
   Share2,
   Sparkles,
@@ -168,7 +169,17 @@ export function RoleEventDetail({
     )
   }
 
-  if (isError || !event) notFound()
+  if (isError || !event) {
+    return (
+      <AppShell role={role} userName={userName} title={title}>
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <h2 className="text-lg font-semibold">Event not found</h2>
+          <p className="mt-1 text-sm text-muted-foreground">This event may have been removed or the link is incorrect.</p>
+          <Link href={backHref} className="mt-4 text-sm font-medium text-primary hover:underline">Go back</Link>
+        </div>
+      </AppShell>
+    )
+  }
 
   const pct = event.capacity > 0 ? Math.round((event.registered / event.capacity) * 100) : 0
   const isFull = event.registered >= event.capacity
@@ -324,17 +335,35 @@ export function RoleEventDetail({
   // Paid events offer a choice of rail instead of a single generic "Buy
   // ticket" button: eSewa settles natively in NPR (works out of the box —
   // see utils/esewa.js's sandbox defaults), Stripe can't settle in NPR so
-  // it charges a converted USD amount instead (see utils/currency.js).
-  const showPaymentChoice = isAttendee && !isRegistered && !isFull && !isPast && !free
+  // Stripe can't settle NPR, so NPR events are billed in converted USD (see currency.js: floor $0.50).
+  // eSewa only handles NPR — hide eSewa for non-NPR events
   const isNprEvent = (event.price.currency || "NPR").toUpperCase() === "NPR"
+  const showPaymentChoice = isAttendee && !isRegistered && !isFull && !isPast && !free
   const usdEstimate =
     isNprEvent && paymentConfig?.nprUsdRate
-      ? (event.price.amount / paymentConfig.nprUsdRate).toFixed(2)
+      ? Math.max(0.5, Math.round((event.price.amount / paymentConfig.nprUsdRate) * 100) / 100).toFixed(2)
       : null
 
+  const searchParams = useSearchParams()
+  const isQrScan = searchParams?.get("qr") === "1"
   return (
     <AppShell role={role} userName={userName} title={title}>
       <div className="space-y-6">
+        {isQrScan && (
+          <div className="flex items-center gap-3 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3">
+            <span className="flex size-8 items-center justify-center rounded-xl bg-primary text-white">
+              <QrIcon className="size-4" />
+            </span>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-ink flex items-center gap-1.5">
+                <Sparkles className="size-3.5 text-primary" /> QR scan verified — {event.title}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {isRegistered ? "Your ticket is ready below. Present the QR at check-in." : "Full event details and registration are right here."}
+              </p>
+            </div>
+          </div>
+        )}
         <Link
           href={backHref}
           className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-ink"
@@ -590,7 +619,7 @@ export function RoleEventDetail({
             )}
 
             <Reveal>
-              <EventQrPoster eventId={eventId} eventTitle={event.title} />
+              <EventQrPoster eventId={eventId} eventTitle={event.title} event={event} ticket={registeredTicket ?? null} role={role} />
             </Reveal>
 
             {isAttendee && (
@@ -684,17 +713,19 @@ export function RoleEventDetail({
 
                 {showPaymentChoice ? (
                   <div className="mt-5 space-y-2">
-                    <button
-                      onClick={handlePayWithEsewa}
-                      disabled={esewaMutation.isPending || checkoutMutation.isPending}
-                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#60bb46] px-4 py-3 text-sm font-semibold text-white transition-all hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-60"
-                    >
-                      {esewaMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <Wallet className="size-4" />}
-                      Pay with eSewa — {formatPrice(event.price)}
-                    </button>
+                    {isNprEvent && (
+                      <button
+                        onClick={handlePayWithEsewa}
+                        disabled={esewaMutation.isPending || checkoutMutation.isPending}
+                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#60bb46] px-4 py-3 text-sm font-semibold text-white transition-all hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-60"
+                      >
+                        {esewaMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <Wallet className="size-4" />}
+                        Pay with eSewa — {formatPrice(event.price)}
+                      </button>
+                    )}
                     <button
                       onClick={handlePayWithStripe}
-                      disabled={checkoutMutation.isPending || esewaMutation.isPending || paymentConfig?.enabled === false}
+                      disabled={checkoutMutation.isPending || esewaMutation.isPending || paymentConfig?.enabled === false || !paymentConfig}
                       className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 py-3 text-sm font-semibold text-ink transition-all hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-60"
                     >
                       {checkoutMutation.isPending ? (
@@ -702,7 +733,7 @@ export function RoleEventDetail({
                       ) : (
                         <CreditCard className="size-4" />
                       )}
-                      Pay by card{usdEstimate ? ` — ~$${usdEstimate}` : ` — ${formatPrice(event.price)}`}
+                      Pay by card{usdEstimate ? ` — ~$${usdEstimate}` : ` — ${formatPrice(event.price)}`}{!isNprEvent ? "" : ""}
                     </button>
                     {isNprEvent && (
                       <p className="text-center text-[11px] text-muted-foreground">

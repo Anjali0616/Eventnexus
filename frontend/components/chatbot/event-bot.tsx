@@ -32,6 +32,7 @@ import {
 const markdownComponents = {
   a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
     if (!href) return <span>{children}</span>
+    if (/^(javascript|data|vbscript):/i.test(href)) return <span>{children}</span>
     if (href.startsWith("/")) {
       return (
         <Link href={href} className="font-medium text-primary underline underline-offset-2 hover:opacity-80">
@@ -371,19 +372,22 @@ export function EventBot({
       .catch(() => setAiStatus({ online: false, attendance: false, cf: false, intent: false }))
   }, [open, aiStatus, setAiStatus])
 
-  // Refresh personalized suggestion chips every time the panel opens — they
-  // are computed live server-side (upcoming counts, ticket existence, live
-  // categories), so an event created or tickets bought elsewhere shows up
-  // on the next open instead of a stale list from the first session.
+  const lastSuggestFetch = useRef(0)
+  // Refresh personalized suggestion chips when panel opens — cached 60s to avoid
+  // hammering DB on every toggle (was previously fetched on *every* open with
+  // no TTL, causing 3 DB queries per toggle).
   useEffect(() => {
     if (!open) return
+    const now = Date.now()
+    if (now - lastSuggestFetch.current < 60_000 && suggestions.length) return
+    lastSuggestFetch.current = now
     chatbotApi
       .suggestions()
       .then(({ suggestions: s }) => {
         if (s?.length) setSuggestions(s)
       })
       .catch(() => {})
-  }, [open, setSuggestions])
+  }, [open, setSuggestions, suggestions.length])
 
   // Drag a panel edge to resize. The chat is anchored bottom-right, so the
   // free edges are left (width) and top (height). Bounds: usable minimum,
@@ -520,7 +524,7 @@ export function EventBot({
             aria-relevant="additions"
             className="flex-1 space-y-3 overflow-y-auto px-4 py-4"
           >
-            {messages.map((m) =>
+            {messages.map((m, idx) =>
               m.from === "user" ? (
                 <UserBubble key={m.id} text={m.text} timestamp={m.timestamp} />
               ) : (
@@ -528,7 +532,7 @@ export function EventBot({
                   key={m.id}
                   text={m.text}
                   timestamp={m.timestamp}
-                  quickReplies={m.quickReplies}
+                  quickReplies={idx === messages.length - 1 ? m.quickReplies : undefined}
                   error={m.error}
                   retryText={m.retryText}
                   onQuickReply={(q) => send(q, eventId)}

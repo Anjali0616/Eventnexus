@@ -30,6 +30,9 @@ const rateLimit = require("../middleware/rateLimit");
 
 const registerLimiter = rateLimit({ windowMs: 60_000, max: 15 });
 const feedbackLimiter = rateLimit({ windowMs: 60_000, max: 10 });
+const createEventLimiter = rateLimit({ windowMs: 60_000, max: 5 });
+const updateEventLimiter = rateLimit({ windowMs: 60_000, max: 20 });
+const aiDraftLimiter = rateLimit({ windowMs: 60_000, max: 20 });
 
 const router = express.Router();
 
@@ -53,6 +56,7 @@ router.post(
   "/ai-draft",
   protect,
   authorize("organizer", "admin", "org_admin"),
+  aiDraftLimiter,
   [
     body("title").notEmpty().withMessage("Title is required"),
     body("category").optional().isString(),
@@ -68,28 +72,79 @@ router.post(
   "/",
   protect,
   authorize("organizer", "admin", "org_admin"),
+  createEventLimiter,
   [
     body("title").notEmpty().withMessage("Title is required"),
-    body("date").notEmpty().withMessage("Date is required"),
-    body("venue").notEmpty().withMessage("Venue is required"),
+    body("status").optional().isIn(["Draft", "Upcoming", "Live", "Past"]).withMessage("Invalid status"),
+    body("date")
+      .if((value, { req }) => req.body.status !== "Draft")
+      .notEmpty().withMessage("Date is required")
+      .isISO8601().withMessage("Invalid date"),
+    body("date").if((value, { req }) => req.body.status === "Draft").optional({ checkFalsy: true }).isISO8601().withMessage("Invalid date"),
+    body("venue")
+      .if((value, { req }) => req.body.status !== "Draft")
+      .notEmpty().withMessage("Venue is required"),
+    body("venue").if((value, { req }) => req.body.status === "Draft").optional({ checkFalsy: true }).isString(),
     body("category").notEmpty().withMessage("Category is required"),
-    body("capacity").isInt({ min: 1 }).withMessage("Capacity must be at least 1"),
+    body("capacity")
+      .if((value, { req }) => req.body.status !== "Draft")
+      .isInt({ min: 1, max: 1000000 }).withMessage("Capacity must be between 1 and 1,000,000"),
+    body("capacity").if((value, { req }) => req.body.status === "Draft").optional({ checkFalsy: true }).isInt({ min: 1, max: 1000000 }).withMessage("Capacity must be between 1 and 1,000,000"),
     body("type")
       .optional()
       .isIn(["In-person", "Hybrid", "Virtual"])
       .withMessage("Invalid event type"),
-    body("imageUrl").optional().isLength({ max: 6_000_000 }).withMessage("Image is too large"),
-    body("tags").optional().isArray().withMessage("Tags must be a list"),
-    body("highlights").optional().isArray().withMessage("Highlights must be a list"),
-    body("agenda").optional().isArray().withMessage("Agenda must be a list"),
-    body("speakers").optional().isArray().withMessage("Speakers must be a list"),
+    body("imageUrl").optional().isLength({ max: 6_000_000 }).withMessage("Image is too large (max 6MB)"),
+    body("tags").optional().isArray({ max: 20 }).withMessage("Tags must be a list (max 20)"),
+    body("tags.*").optional().isString().trim().isLength({ max: 50 }).withMessage("Each tag max 50 chars"),
+    body("highlights").optional().isArray({ max: 20 }).withMessage("Highlights must be a list (max 20)"),
+    body("highlights.*").optional().isString().trim().isLength({ max: 200 }).withMessage("Each highlight max 200 chars"),
+    body("agenda").optional().isArray({ max: 50 }).withMessage("Agenda must be a list (max 50)"),
+    body("speakers").optional().isArray({ max: 30 }).withMessage("Speakers must be a list (max 30)"),
     body("contactEmail").optional({ checkFalsy: true }).isEmail().withMessage("Invalid contact email"),
+    body("contactPhone").optional({ checkFalsy: true }).isLength({ max: 30 }).withMessage("Phone too long"),
+    body("website").optional({ checkFalsy: true }).isURL({ require_protocol: true }).withMessage("Website must be a valid URL (https://...)"),
   ],
   validate,
   createEvent
 );
 
-router.put("/:id", protect, authorize("organizer", "admin", "org_admin"), updateEvent);
+router.put(
+  "/:id",
+  protect,
+  authorize("organizer", "admin", "org_admin"),
+  updateEventLimiter,
+  [
+    body("title").optional().isString().trim().isLength({ min: 3, max: 120 }).withMessage("Title must be 3-120 chars"),
+    body("status").optional().isIn(["Draft", "Upcoming", "Live", "Past"]).withMessage("Invalid status"),
+    body("date").optional({ checkFalsy: true }).isISO8601().withMessage("Invalid date"),
+    body("venue").optional({ checkFalsy: true }).isString().trim().isLength({ min: 2, max: 200 }).withMessage("Venue must be 2-200 chars"),
+    body("category").optional().isString().trim().isLength({ min: 2, max: 50 }).withMessage("Category must be 2-50 chars"),
+    body("capacity").optional({ checkFalsy: true }).isInt({ min: 1, max: 1000000 }).withMessage("Capacity must be between 1 and 1,000,000"),
+    body("type").optional().isIn(["In-person", "Hybrid", "Virtual"]).withMessage("Invalid event type"),
+    body("imageUrl").optional({ checkFalsy: true }).isLength({ max: 6_000_000 }).withMessage("Image is too large (max 6MB)"),
+    body("tags").optional().isArray({ max: 20 }).withMessage("Tags must be a list (max 20)"),
+    body("tags.*").optional().isString().trim().isLength({ max: 50 }).withMessage("Each tag max 50 chars"),
+    body("highlights").optional().isArray({ max: 20 }).withMessage("Highlights must be a list (max 20)"),
+    body("highlights.*").optional().isString().trim().isLength({ max: 200 }).withMessage("Each highlight max 200 chars"),
+    body("agenda").optional().isArray({ max: 50 }).withMessage("Agenda must be a list (max 50)"),
+    body("speakers").optional().isArray({ max: 30 }).withMessage("Speakers must be a list (max 30)"),
+    body("contactEmail").optional({ checkFalsy: true }).isEmail().withMessage("Invalid contact email"),
+    body("contactPhone").optional({ checkFalsy: true }).isLength({ max: 30 }).withMessage("Phone too long"),
+    body("website").optional({ checkFalsy: true }).isURL({ require_protocol: true }).withMessage("Website must be a valid URL"),
+    body("price").optional().custom((val) => {
+      if (val == null || val === "") return true;
+      if (typeof val === "object") {
+        if (val.amount != null && String(val.amount).trim() !== "" && !Number.isFinite(Number(val.amount))) throw new Error("Price amount must be numeric");
+        return true;
+      }
+      if (!Number.isFinite(Number(val))) throw new Error("Price must be numeric");
+      return true;
+    }),
+  ],
+  validate,
+  updateEvent
+);
 
 router.delete("/:id", protect, authorize("organizer", "admin", "org_admin"), deleteEvent);
 

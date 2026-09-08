@@ -44,26 +44,17 @@ export default function MyTicketsPage() {
     status,
     page,
     limit: 12,
-  })
+    timeBucket: tab === "Upcoming" ? "upcoming" : "past",
+  } as any)
   const user = userData?.user
+  // Server now buckets by event date + returns global counts — no client filter needed
   const tickets = data?.tickets ?? []
   const pagination = data?.pagination
-
-  // Bucketed by the event's actual date, not its (manually-maintained)
-  // status — an event can be past-dated while its status still says
-  // "Upcoming", which used to hide it from the Past tab entirely.
-  const list = tickets.filter((t) => {
-    const event = typeof t.event === "object" ? (t.event as EventData) : null
-    const isPast = event ? new Date(event.date).getTime() <= Date.now() : true
-    return tab === "Upcoming" ? !isPast : isPast
-  })
-
-  const allUpcoming = tickets.filter((t) => {
-    const event = typeof t.event === "object" ? (t.event as EventData) : null
-    return event ? new Date(event.date).getTime() > Date.now() && t.status !== "cancelled" : false
-  }).length
-  const attended = tickets.filter((t) => t.status === "checked-in").length
-  const cancelled = tickets.filter((t) => t.status === "cancelled").length
+  const counts = (data as any)?.counts as { upcoming: number, past: number, cancelled: number, checkedIn: number, total: number } | undefined
+  const list = tickets
+  const allUpcoming = counts?.upcoming ?? 0
+  const attended = counts?.checkedIn ?? 0
+  const cancelled = counts?.cancelled ?? 0
 
   return (
     <AppShell role="Attendee" userName={user?.name || "Attendee"} title="My Tickets">
@@ -72,7 +63,7 @@ export default function MyTicketsPage() {
           {tabs.map((t) => (
             <button
               key={t}
-              onClick={() => setTab(t)}
+              onClick={() => { setTab(t); setPage(1) }}
               className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold transition-all sm:flex-none ${
                 tab === t ? "bg-ink text-white" : "text-muted-foreground hover:text-ink"
               }`}
@@ -163,7 +154,11 @@ export default function MyTicketsPage() {
                               : "Valid"}
                         </span>
                         <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                          {event && isFreeEvent(event.price) ? "Free" : event ? formatPrice(event.price) : "—"}
+                          {(ticket as any).payment?.status === "paid"
+                            ? `${(ticket as any).payment.currency || "NPR"} ${(ticket as any).payment.amount?.toLocaleString?.() ?? (ticket as any).payment.amount} · ${(ticket as any).payment.provider || "card"}`
+                            : (ticket as any).payment?.status === "refunded"
+                              ? `Refunded ${((ticket as any).payment.amountRefunded ?? (ticket as any).payment.amount) ?? ""} ${(ticket as any).payment.currency || ""}`
+                              : event && isFreeEvent(event.price) ? "Free" : event ? formatPrice(event.price) : "—"}
                         </span>
                       </div>
                       <h3 className="font-display mt-2 truncate text-lg font-bold text-ink group-hover:text-primary">

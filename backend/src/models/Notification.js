@@ -20,6 +20,8 @@ const notificationSchema = new mongoose.Schema(
         "event-update",
         "system",
         "nearby-event",
+        "new-event",
+        "event_published",
         "check-in",
         // Cross-organization co-hosting: a new AI match, the partner org
         // accepting/declining, and the confirmed partnership.
@@ -58,5 +60,8 @@ const notificationSchema = new mongoose.Schema(
 );
 
 notificationSchema.index({ recipient: 1, createdAt: -1 });
+notificationSchema.index({ recipient: 1, read: 1, createdAt: -1 });
+notificationSchema.index({ recipient: 1, type: 1 });
+notificationSchema.index({ event: 1, recipient: 1, type: 1 }, { unique: true, partialFilterExpression: { type: "new-event" } });
 
 module.exports = mongoose.model("Notification", notificationSchema);

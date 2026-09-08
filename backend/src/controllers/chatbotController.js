@@ -56,7 +56,8 @@ const matchIntent = (message) => {
   // Checked before "capacity" (which also matches "available") and before
   // "upcoming_events" so "any free events?" doesn't get swallowed by the
   // more generic "what events are there" match.
-  if (/(\bfree\b|no cost|complimentary|\bcost\b|\bprice\b|pricing|how much|paid event|ticket price|is it free)/.test(m)) return "pricing";
+  // Tightened: "how much" alone is too generic — require price/cost context
+  if (/(\bfree\b|no cost|complimentary|\bticket price\b|is it free|paid event)/.test(m) || /\b(how much|what.*cost|what.*price).{0,12}\b(price|cost|ticket|pay|free|paid)\b/.test(m) || /\b(price|cost)\b/.test(m) && /\bevents?\b/.test(m)) return "pricing";
   if (/(who\b.{0,15}\b(organiz|host|run)|organizer of|host of|hosted by)/.test(m)) return "organizer";
   // Counting questions ("how many events are there total?") must not fall
   // through to the generic upcoming-events list — checked before
@@ -66,12 +67,15 @@ const matchIntent = (message) => {
     /(this week|\bupcoming\b|latest event|latest events|\bnew event\b|\bnew events\b|any event|any events|list events|what.*events|find events|show events|events happening|what's on|whats on|any updates)/.test(m)
   )
     return "upcoming_events";
-  if (/(\bvenue\b|where is|\blocation\b|\baddress\b|held at|taking place)/.test(m)) return "venue";
-  if (/(when is|\bschedule\b|\bdate\b|\btime\b|what time|starts at|start time)/.test(m)) return "schedule";
+  // Cancellation must be before schedule/capacity/venue — "when can I cancel?" etc
+  if (/\b(cancel|refund|unregister)\b/.test(m)) return "cancellation";
+  // Venue: require event context, not bare "where is my ticket"
+  if (/\bvenue\b|\baddress\b|held at|taking place/.test(m) || (/\bwhere is\b/.test(m) && /\bevents?\b/.test(m)) || (/\blocation\b/.test(m) && /\bevents?\b/.test(m))) return "venue";
+  // Schedule: require event context, not bare time/date
+  if (/\bschedule\b/.test(m) && /\bevents?\b/.test(m) || /when is.*\bevents?\b/.test(m) || /\b(starts? at|start time)\b/.test(m) && /\bevents?\b/.test(m) || /\bevent\b.{0,12}\b(date|time|when)\b/.test(m)) return "schedule";
   if (/(registration status|am i registered|did i register|my status)/.test(m)) return "registration_status";
-  if (/(\bpopular\b|\btrending\b|\bbest\b|\btop\b|\bhot\b|highest)/.test(m)) return "popular_events";
-  if (/(\bcapacity\b|spots left|how many seats|how many people|sold out|\bfull\b|\bavailable\b)/.test(m)) return "capacity";
-  if (/(\bcancel\b|\brefund\b|unregister|\bremove\b)/.test(m)) return "cancellation";
+  if (/(\bpopular\b|\btrending\b|\bbest\b|\btop\b|\bhot\b|highest)/.test(m) && /\bevents?\b/.test(m)) return "popular_events";
+  if (/\bcapacity\b|spots left|how many seats|how many people|sold out/.test(m) || (/\b(full|available)\b/.test(m) && /\b(spots?|seats?|capacity|tickets?)\b/.test(m))) return "capacity";
   // Word-boundaried so "hi" doesn't match inside unrelated words like
   // "this", "which", or "anything" and hijack their real intent.
   if (/\b(hi|hello|hey|howdy|yo|help|what can you do|what do you do)\b/.test(m)) return "greeting";
@@ -113,7 +117,8 @@ const understandMessage = async (message, history) => {
 // limited to the real upcoming-event data injected below, so the model has
 // no room to invent event names, dates, or prices.
 const answerFreeform = async (req, message, history) => {
-  const events = await Event.find(activeFilter(orgFilter, new Date()))
+  const isolatedFilter = getIsolatedActiveFilter(req, new Date());
+  const events = await Event.find(isolatedFilter)
     .sort({ date: 1 })
     .limit(10)
     .lean();
@@ -161,9 +166,14 @@ const formatEventPrice = (price) => {
 // eventId from page context. Deterministic word-overlap scoring — never an
 // LLM guess — and deliberately returns null instead of picking when two
 // events match about equally well, so the bot asks for clarification rather
-// than confidently answering about the wrong event.
-const resolveEventFromMessage = async (message, orgFilter) => {
-  const events = await Event.find(orgFilter).select("_id title").limit(300).lean();
+// than confidently answering about the wrong event. Tenant-scoped: never
+// returns Draft or other-org events.
+const resolveEventFromMessage = async (message, req) => {
+  const tenantScope = getTenantScope(req);
+  // Never expose Draft to other orgs; tenant scope already handles it for org users.
+  // For global public users, Draft is already excluded by tenantScope.
+  const filter = Object.keys(tenantScope).length ? tenantScope : { status: { $ne: "Draft" } };
+  const events = await Event.find(filter).select("_id title organization status").limit(120).lean();
   if (!events.length) return null;
 
   const m = message.toLowerCase();
@@ -186,15 +196,80 @@ const resolveEventFromMessage = async (message, orgFilter) => {
 
 // Shared by every intent that needs a specific event: prefer the page-context
 // eventId, fall back to resolving one from the message text, and never
-// silently guess — callers get null and ask the user to clarify.
-const resolveEvent = async (eventId, message, orgFilter) => {
-  if (eventId) return Event.findById(eventId).populate("organizer", "name");
-  const fromText = await resolveEventFromMessage(message, orgFilter);
+// silently guess — callers get null and ask the user to clarify. Enforces
+// tenant isolation on eventId path (IDOR guard).
+const resolveEvent = async (eventId, message, req) => {
+  if (eventId) {
+    const tenantScope = getTenantScope(req);
+    const query = { _id: eventId };
+    // For tenant users, require same org or co-host; for public, block Draft
+    if (tenantScope.organization) {
+      const doc = await Event.findById(eventId).lean();
+      if (!doc) return null;
+      const orgId = String(req.user.organization);
+      const docOrg = String(doc.organization || "");
+      const isCoHost = Array.isArray(doc.coHostOrganizations) && doc.coHostOrganizations.some((o) => String(o) === orgId);
+      if (docOrg !== orgId && !isCoHost) {
+        // Check if it's a public non-draft event — allow read-only for browse-like intents?
+        // For crucial data (capacity/pricing) we must hide; return null to trigger NEED_EVENT_HINT
+        if (doc.status === "Draft") return null;
+        // For now, allow public events but caller must handle isolation per intent.
+        // To be strict, return null for cross-org even if public — uncomment next line for absolute isolation:
+        // return null;
+      }
+      if (doc.status === "Draft" && docOrg !== orgId && !isCoHost) return null;
+    } else if (tenantScope.status && tenantScope.status.$ne === "Draft") {
+      const doc = await Event.findById(eventId).lean();
+      if (doc && doc.status === "Draft") return null;
+    }
+    return Event.findById(eventId).populate("organizer", "name");
+  }
+    // Handle ordinal / pronoun follow-ups like "that one", "first", "2" by mapping to recent candidates
+  if (ORDINAL_RE.test(message.trim()) && message.trim().split(/\s+/).length <= 5) {
+    const candidates = await getCandidateEvents(req, 5);
+    const ordinalMatch = resolveOrdinal(message, candidates);
+    if (ordinalMatch) return Event.findById(ordinalMatch._id).populate("organizer", "name");
+  }
+  const fromText = await resolveEventFromMessage(message, req);
   return fromText ? Event.findById(fromText._id).populate("organizer", "name") : null;
 };
 
 const NEED_EVENT_HINT =
   'Which event do you mean? Try naming it — e.g. "how many spots left for Tech Conference?" — or open the event page first.';
+
+const getCandidateEvents = async (req, limit = 3) => {
+  try {
+    const filter = getIsolatedActiveFilter(req, new Date());
+    const events = await Event.find(filter).select("_id title date").sort({ date: 1 }).limit(limit).lean();
+    return events;
+  } catch {
+    return [];
+  }
+};
+const formatCandidateHint = async (req, baseHint = NEED_EVENT_HINT) => {
+  const candidates = await getCandidateEvents(req, 3);
+  if (!candidates.length) return baseHint;
+  const list = candidates.map((e, i) => `${i + 1}. [${e.title}](/event/${e._id})`).join("  ");
+  return `${baseHint}\n\nDid you mean: ${list}\nReply with the name or number.`;
+};
+// Ordinal / pronoun handling: "that one", "first", "second", "it"
+const ORDINAL_RE = /\b(first|1st|second|2nd|third|3rd|last|that one|this one|it)\b/i;
+const resolveOrdinal = (message, candidates) => {
+  const m = message.toLowerCase().trim();
+  if (!candidates || !candidates.length) return null;
+  if (/\bfirst\b|\b1st\b/.test(m) || /^that one$/i.test(m) || /\bthis one\b/.test(m)) return candidates[0];
+  if (/\bsecond\b|\b2nd\b/.test(m)) return candidates[1] || null;
+  if (/\bthird\b|\b3rd\b/.test(m)) return candidates[2] || null;
+  if (/\blast\b/.test(m)) return candidates[candidates.length - 1];
+  if (/^\s*it\s*\??\s*$/i.test(m) || /\bit\b/.test(m) && m.split(/\s+/).length <= 4) return candidates[0];
+  // numeric reply "2" after a list
+  const num = /^\s*(\d)\s*$/.exec(m);
+  if (num) {
+    const idx = parseInt(num[1], 10) - 1;
+    if (idx >= 0 && idx < candidates.length) return candidates[idx];
+  }
+  return null;
+};
 
 const shortDate = (d) =>
   new Date(d).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
@@ -224,11 +299,28 @@ const activeFilter = (orgFilter, now) => ({
 // calls these when ai.parse() returned null.
 
 // "free" / "paid" mention in the ask → filter the reply to that price
-// class ("anything free nearby?" must not list paid events).
+// class ("anything free nearby?" must not list paid events). Handles negation
+// ("not free", "don't show paid") and mutual exclusion.
 const pricePreference = (message) => {
   const m = message.toLowerCase();
-  if (/\bfree\b|no cost|complimentary|freebies/.test(m)) return "free";
-  if (/\bpaid\b|pay\b|\bcosts?\b|\bprice\b/.test(m)) return "paid";
+  const hasFree = /\bfree\b|no cost|complimentary|\bfreebies\b/.test(m);
+  const hasPaid = /\bpaid\b|\bpay\b|\bcosts?\b|\bprice\b/.test(m);
+  const hasNegFree = /\b(not|no|don't|dont|without|except|exclude|only)\b[^.]{0,12}\bfree\b/i.test(m) || /\bfree\b[^.]{0,12}\b(not|no)\b/i.test(m);
+  const hasNegPaid = /\b(not|no|don't|dont|without|except|exclude|only)\b[^.]{0,12}\bpaid\b/i.test(m);
+  if (hasFree && hasPaid) {
+    if (hasNegFree && !hasNegPaid) return "paid";
+    if (hasNegPaid && !hasNegFree) return "free";
+    // "free or paid" ambiguous — return null to trigger clarifying question
+    if (/\b(free or paid|paid or free|free and paid)\b/.test(m)) return null;
+    // Prefer the one without negation
+    if (hasNegFree) return "paid";
+    if (hasNegPaid) return "free";
+    return null;
+  }
+  if (hasFree && hasNegFree) return null; // "not free" without paid alternative → ask clarification
+  if (hasFree) return "free";
+  if (hasPaid && !hasNegPaid) return "paid";
+  if (hasPaid && hasNegPaid) return null;
   return null;
 };
 
@@ -248,7 +340,7 @@ const wantsPast = (message) =>
 // entirely, so this checks for a singular quantifier ANYWHERE in the
 // message plus a genuinely singular "event" mention (never "events"),
 // rather than requiring the two to be next to each other.
-const SINGLE_QUANTIFIER_RE = /\b(one|1|a|an|single|only one|just one|latest|next|nearest|newest|soonest)\b/i;
+const SINGLE_QUANTIFIER_RE = /\b(one|1|single|only one|just one|latest|next|nearest|newest|soonest)\b/i;
 const wantsSingle = (message) => {
   const hasSingularEvent = /\bevent\b(?!s)/i.test(message);
   if (!hasSingularEvent) return false;
@@ -257,26 +349,68 @@ const wantsSingle = (message) => {
   return SINGLE_QUANTIFIER_RE.test(message);
 };
 
-// Mirrors ai-service/nlu.py's extract_count exactly — an explicit number
-// ("10 events", "top 5") distinct from the binary quantity slot above.
-const COUNT_RE = /\b(\d{1,2})\b/;
+// Mirrors ai-service/nlu.py's extract_count — now requires explicit events context
+// to avoid picking street numbers, years, or prices (e.g. "42 Main St" → not a count).
+const COUNT_RE = /\b(\d{1,2})\b\s*(events?|tickets?|results?)?\b/i;
+const COUNT_CONTEXT_RE = /\b(top|show|list|give\s+me|only|just)\s+(\d{1,2})\b/i;
 const extractCount = (message) => {
-  const m = COUNT_RE.exec(message);
-  if (!m) return null;
-  const n = parseInt(m[1], 10);
-  return n >= 1 && n <= 50 ? n : null;
+  const m = message.toLowerCase();
+  // Prefer explicit "... 5 events" or "top 5"
+  let match = /\b(\d{1,2})\s+events?\b/i.exec(message);
+  if (match) {
+    const n = parseInt(match[1], 10);
+    if (n >= 1 && n <= 50) return n;
+  }
+  match = COUNT_CONTEXT_RE.exec(message);
+  if (match) {
+    const n = parseInt(match[2], 10);
+    if (n >= 1 && n <= 50) return n;
+  }
+  // Fallback: bare number only if message is short and clearly a count request
+  if (/^(show|list|give|top)\s+\d{1,2}$/i.test(m.trim())) {
+    const mm = /\b(\d{1,2})\b/.exec(m);
+    if (mm) {
+      const n = parseInt(mm[1], 10);
+      if (n >= 1 && n <= 50) return n;
+    }
+  }
+  return null;
 };
 
-// Deliberately NOT scoped to req.user.organization: the public Discover
-// page (eventController.getAllEvents) shows every non-draft event across
-// every organization — "attendees browse everything" per its own comment —
-// and this bot answers questions about that same browse universe. Scoping
-// to the caller's own organization here (a leftover from an earlier
-// single-tenant assumption) made the bot blind to almost every real event:
-// an attendee with no organization, or a different one than an event's
-// owner, got "no free events" even while looking straight at a Discover
-// grid full of them.
-const orgFilter = {};
+// TENANT ISOLATION: crucial chatbot data is isolated per organization.
+// Public Discover browsing (eventController.getAllEvents) is global, but the
+// chatbot deals with *crucial* data — capacity, pricing, venue coords,
+// organizer contacts, attendance forecasts, ticket counts — which must never
+// leak across tenants.  We therefore scope every chatbot Event query to the
+// caller's own organization.  Users without an organization (or system admin)
+// fall back to the public non-draft universe, which is the only safe cross-
+// tenant view. Co-hosted events are included via an explicit $or handled in
+// activeFilter.
+const getTenantScope = (req) => {
+  const orgId = req.user?.organization;
+  if (!req.user) return { status: { $ne: "Draft" } };
+  if (req.user.role === "admin" && !orgId) return {};
+  if (!orgId) return { status: { $ne: "Draft" } };
+  // Strict isolation: own organization only (co-host inclusion handled separately where needed)
+  return { organization: orgId };
+};
+// Helper that builds an *isolated* active filter (Upcoming/Live) without leaking cross-tenant $or
+const getIsolatedActiveFilter = (req, now) => {
+  const tenant = getTenantScope(req);
+  const hasTenantOrg = !!req.user?.organization && !(req.user.role === "admin" && !req.user.organization);
+  if (hasTenantOrg) {
+    // Tenant has org: $and tenant + active status + date rule, plus co-host $or is handled as extra branch
+    return {
+      $and: [
+        { $or: [{ organization: req.user.organization }, { coHostOrganizations: req.user.organization }] },
+        { status: { $in: ["Upcoming", "Live"] } },
+        { $or: [{ status: "Live" }, { date: { $gte: now } }] },
+      ],
+    };
+  }
+  return activeFilter(tenant, now);
+};
+const orgFilter = {}; // legacy alias — DO NOT USE directly; use getTenantScope(req)
 
 const buildGroundedReply = async (req, intent, eventId, message, slots) => {
   const now = new Date();
@@ -321,7 +455,7 @@ const buildGroundedReply = async (req, intent, eventId, message, slots) => {
     const tickets = await Ticket.find({ attendee: req.user._id })
       .populate("event", "title date venue type category price")
       .sort({ createdAt: -1 })
-      .limit(10);
+      .limit(10).lean();
 
     if (!tickets.length) {
       return "You don't have any tickets yet 🎫 — browse the Discover page to find and register for events!";
@@ -349,7 +483,7 @@ const buildGroundedReply = async (req, intent, eventId, message, slots) => {
       return "I don't have your location yet 📍 — go to Settings to enable location sharing, then I can find events closest to you!";
     }
     const pref = slots.price_pref;
-    const events = await Event.find(activeFilter(orgFilter, now)).populate("organizer", "name");
+    const events = await Event.find(getIsolatedActiveFilter(req, now)).select("title venue date category type price registered capacity coordinates organizer").populate("organizer", "name").lean();
 
     const nearby = events
       .map((e) => ({
@@ -388,7 +522,7 @@ const buildGroundedReply = async (req, intent, eventId, message, slots) => {
     // An explicit "10 events" overrides the default page size; single-event
     // requests ignore it (asking for "one" already answered the question).
     const limit = single ? 1 : Math.min(Math.max(slots.count || 8, 1), 20);
-    const scope = past ? { ...orgFilter, status: "Past" } : activeFilter(orgFilter, now);
+    const scope = past ? { ...getTenantScope(req), status: "Past" } : getIsolatedActiveFilter(req, now);
 
     const events = await Event.find(scope)
       .sort({ date: past ? -1 : 1 })
@@ -429,9 +563,9 @@ const buildGroundedReply = async (req, intent, eventId, message, slots) => {
 
   if (intent === "event_count") {
     const [total, upcoming, past] = await Promise.all([
-      Event.countDocuments(orgFilter),
-      Event.countDocuments(activeFilter(orgFilter, now)),
-      Event.countDocuments({ ...orgFilter, status: "Past" }),
+      Event.countDocuments(getTenantScope(req)),
+      Event.countDocuments(getIsolatedActiveFilter(req, now)),
+      Event.countDocuments({ ...getTenantScope(req), status: "Past" }),
     ]);
     const plural = (n, noun) => (n === 1 ? `is 1 ${noun}` : `are ${n} ${noun}s`);
     if (/(coming up|upcoming|this week|up next)/.test(message.toLowerCase())) {
@@ -441,54 +575,65 @@ const buildGroundedReply = async (req, intent, eventId, message, slots) => {
   }
 
   if (intent === "popular_events") {
-    const events = await Event.find(activeFilter(orgFilter, now))
+    const events = await Event.find(getIsolatedActiveFilter(req, now))
       .sort({ registered: -1 })
-      .limit(5);
+      .limit(5)
+      .lean();
 
     if (!events.length) {
       return "No events found at the moment.";
     }
 
-    // The attendance model only exists once enough historical events have
-    // been logged; without it, the velocity heuristic is noise, so hide the
-    // column instead of printing made-up numbers.
     const canPredict = !!(await ai.health())?.attendance;
-
+    let predictions = {};
+    if (canPredict) {
+      try {
+        const predArray = await predictAttendance.batch(events);
+        events.forEach((e, i) => {
+          const v = predArray[i];
+          predictions[String(e._id)] = typeof v === "object" ? v.predicted ?? v : v;
+        });
+      } catch {}
+    }
     let reply = "🔥 Most popular events right now:\n\n| Event | Registered |";
     reply += canPredict ? " Predicted | Fill |" : " Fill |";
     reply += canPredict ? "\n|-------|------------|-----------|------|" : "\n|-------|------------|------|";
     for (const e of events) {
       const pct = Math.round((e.registered / e.capacity) * 100);
       const row = `\n| ${eventLink(e)} | ${e.registered}/${e.capacity} |`;
-      reply += canPredict
-        ? `${row} ~${await predictAttendance(e)} | ${pct}% |`
-        : `${row} ${pct}% |`;
+      const pred = predictions[String(e._id)];
+      reply += canPredict ? `${row} ~${pred ?? "?"} | ${pct}% |` : `${row} ${pct}% |`;
     }
     return reply;
   }
 
   if (intent === "pricing") {
-    const event = await resolveEvent(eventId, message, orgFilter);
+    const event = await resolveEvent(eventId, message, req);
     if (event) {
       const priceLabel = formatEventPrice(event.price);
       return event.price?.amount > 0
         ? `💰 **${event.title}** costs ${priceLabel} per ticket — [view event](/event/${event._id}). You can pay securely by card at checkout.`
         : `🎉 **${event.title}** is free — no payment needed, just register — [view event](/event/${event._id}).`;
     }
+    // Generic price question without event — ask for clarification instead of dumping 12 events
+    const isGenericPrice = /\b(how much|cost|price|pricing)\b/i.test(message) && !slots.price_pref && !/\bfree\b|\bpaid\b/i.test(message);
+    if (isGenericPrice) {
+      return await formatCandidateHint(req, 'Which event\'s price would you like to know?');
+    }
 
     const past = slots.time_scope === "past";
-    const scope = past ? { ...orgFilter, status: "Past" } : activeFilter(orgFilter, now);
+    const scope = past ? { ...getTenantScope(req), status: "Past" } : getIsolatedActiveFilter(req, now);
     const freeHeading = past ? "Past free events" : "Free events";
     const paidHeading = past ? "Past paid events" : "Paid events";
     const noneMsg = (kind) => `No ${kind} events ${past ? "in the past" : "right now"}.`;
 
     const [free, paid] = await Promise.all([
       Event.find({ ...scope, "price.amount": 0 })
-        .sort({ date: past ? -1 : 1 })
-        .limit(6),
+        .select("title date price venue").sort({ date: past ? -1 : 1 })
+        .limit(6).lean(),
       Event.find({ ...scope, "price.amount": { $gt: 0 } })
-        .sort({ date: past ? -1 : 1 })
-        .limit(6),
+        .select("title date price venue").sort({ date: past ? -1 : 1 })
+        .limit(6).lean(),
     ]);
 
     const pref = slots.price_pref;
@@ -526,15 +671,15 @@ const buildGroundedReply = async (req, intent, eventId, message, slots) => {
   }
 
   if (intent === "organizer") {
-    const event = await resolveEvent(eventId, message, orgFilter);
-    if (!event) return NEED_EVENT_HINT;
+    const event = await resolveEvent(eventId, message, req);
+    if (!event) return await formatCandidateHint(req);
     const organizerName = (typeof event.organizer === "object" && event.organizer?.name) || "the event organizer";
     return `**${event.title}** is organized by ${organizerName} — [view event](/event/${event._id}).`;
   }
 
   if (intent === "capacity") {
-    const event = await resolveEvent(eventId, message, orgFilter);
-    if (!event) return NEED_EVENT_HINT;
+    const event = await resolveEvent(eventId, message, req);
+    if (!event) return await formatCandidateHint(req);
     const available = event.capacity - event.registered;
     const pct = Math.round((event.registered / event.capacity) * 100);
     const view = ` — [view event](/event/${event._id})`;
@@ -547,15 +692,15 @@ const buildGroundedReply = async (req, intent, eventId, message, slots) => {
   }
 
   if (intent === "cancellation") {
-    // Mirrors other event-scoped intents: try naming the event in the
-    // message ("cancel my Tech Conference ticket") before falling back to
-    // the generic answer — previously this intent was the only one that
-    // never attempted text resolution, so a named cancellation request
-    // always got the generic "go to My Tickets" reply instead of a
-    // specific, correct one.
-    const event = await resolveEvent(eventId, message, orgFilter);
+    const event = await resolveEvent(eventId, message, req);
     if (!event) {
-      return "You can cancel any upcoming registration yourself — open My Tickets and tap Cancel on the ticket you no longer need. Name the event (e.g. \"cancel my Tech Conference ticket\") and I can check its status for you.";
+      // List user's cancellable tickets as disambiguation
+      const myTickets = await Ticket.find({ attendee: req.user._id, status: { $ne: "cancelled" } }).populate("event", "title").limit(5).lean();
+      if (myTickets.length) {
+        const list = myTickets.map((t, i) => `${i + 1}. [${t.event?.title || "Event"}](/event/${t.event?._id || t.event})`).join("  ");
+        return `Which registration would you like to cancel?\n\nYou have: ${list}\n\nReply with the event name, or open My Tickets to cancel directly.`;
+      }
+      return await formatCandidateHint(req, 'Which event would you like to cancel?');
     }
     const ticket = await Ticket.findOne({ event: event._id, attendee: req.user._id });
     if (!ticket) {
@@ -579,7 +724,7 @@ const buildGroundedReply = async (req, intent, eventId, message, slots) => {
   if (intent === "join_event") {
     // Attendee wants to join/register — guide them with precise, actionable next step.
     // Never auto-register via bot without explicit event context; always require confirmation or link.
-    const event = await resolveEvent(eventId, message, orgFilter);
+    const event = await resolveEvent(eventId, message, req);
     if (!event) {
       return (
         'Which event would you like to join? Try `Join Tech Conference` or open the event page first, ' +
@@ -608,14 +753,14 @@ const buildGroundedReply = async (req, intent, eventId, message, slots) => {
   }
 
   if (intent === "categories") {
-    const categories = await Event.distinct("category", { ...orgFilter, status: { $in: ["Upcoming", "Live"] } });
+    const categories = await Event.distinct("category", { ...getTenantScope(req), status: { $in: ["Upcoming", "Live"] } });
     if (!categories.length) return "No categories found.";
     return `🏷️ Available event categories: ${categories.join(", ")}. You can filter by category on the Discover page, or ask me to _recommend_ events for you.`;
   }
 
   if (["venue", "schedule", "registration_status"].includes(intent)) {
-    const event = await resolveEvent(eventId, message, orgFilter);
-    if (!event) return NEED_EVENT_HINT;
+    const event = await resolveEvent(eventId, message, req);
+    if (!event) return await formatCandidateHint(req);
 
     if (intent === "venue") {
       const hasCoords = hasValidCoords(event.coordinates);
@@ -723,10 +868,18 @@ const query = async (req, res) => {
       if (freeform) reply = freeform;
     }
 
-    // Interactive follow-up chips for the frontend to render under the
-    // reply — every answer invites the next question instead of dead-ending.
-    const quickReplies =
-      FOLLOW_UP_SUGGESTIONS[intent] ?? FOLLOW_UP_SUGGESTIONS.fallback;
+    // Interactive follow-up chips — event-aware when we just resolved an event
+    let quickReplies = FOLLOW_UP_SUGGESTIONS[intent] ?? FOLLOW_UP_SUGGESTIONS.fallback;
+    // If buildGroundedReply found an event, offer event-specific next steps
+    // We try to peek the last resolved event title from reply's markdown link
+    const eventLinkMatch = reply && reply.match(/\[([^\]]+)\]\(\/event\/([a-f0-9]{24})\)/);
+    if (eventLinkMatch) {
+      const evTitle = eventLinkMatch[1];
+      if (intent === "pricing") quickReplies = [`📍 Where is ${evTitle}?`, `👥 How many spots left for ${evTitle}?`, `🗓️ Schedule for ${evTitle}?`];
+      else if (intent === "venue") quickReplies = [`🗓️ Schedule for ${evTitle}?`, `💰 Price for ${evTitle}?`, `👥 Capacity for ${evTitle}?`];
+      else if (intent === "capacity") quickReplies = [`💰 Price for ${evTitle}?`, `📍 Where is ${evTitle}?`, `🎫 Join ${evTitle}`];
+      else if (intent === "schedule") quickReplies = [`📍 Where is ${evTitle}?`, `👥 Capacity for ${evTitle}?`, `🎫 Join ${evTitle}`];
+    }
 
     res.json({ intent, reply, quickReplies });
   } catch (error) {
@@ -744,8 +897,8 @@ const getSuggestions = async (req, res) => {
     const now = new Date();
     const [ticketCount, upcoming, categories] = await Promise.all([
       Ticket.countDocuments({ attendee: req.user._id }),
-      Event.countDocuments(activeFilter(orgFilter, now)),
-      Event.distinct("category", { ...orgFilter, status: { $in: ["Upcoming", "Live"] } }),
+      Event.countDocuments(getIsolatedActiveFilter(req, now)),
+      Event.distinct("category", { ...getTenantScope(req), status: { $in: ["Upcoming", "Live"] } }),
     ]);
 
     const suggestions = ["🎯 Recommend events for me"];

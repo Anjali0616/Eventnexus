@@ -23,6 +23,11 @@ const socketUrl = () => {
   return apiBase.replace(/\/api\/?$/, "");
 };
 
+const socketPath = () => {
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
+  return apiBase.includes("/api") ? "/api/socket.io" : "/socket.io";
+};
+
 export const getSocket = (token?: string | null): Socket | null => {
   if (typeof window === "undefined") return null;
   const jwtToken = token ?? (typeof window !== "undefined" ? localStorage.getItem("token") : null);
@@ -38,6 +43,7 @@ export const getSocket = (token?: string | null): Socket | null => {
 
   socket = io(socketUrl(), {
     auth: { token: jwtToken },
+    path: socketPath(),
     transports: ["websocket", "polling"],
     reconnectionAttempts: 10,
     timeout: 10_000,

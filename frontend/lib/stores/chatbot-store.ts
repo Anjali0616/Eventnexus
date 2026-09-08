@@ -205,7 +205,9 @@ export const useChatbotStore = create<ChatbotState>()(
         if (!trimmed || typing) return
         if (!conversations.some((c) => c.id === activeId)) return
 
-        const history = [...get().conversations.find((c) => c.id === activeId)!.context, { role: "user" as const, content: trimmed }]
+        const priorContext = get().conversations.find((c) => c.id === activeId)!.context;
+        const historyForApi = priorContext.slice(-8); // only prior turns, not current message (backend gets message separately)
+        const historyForStore = [...priorContext, { role: "user" as const, content: trimmed }];
 
         set({ input: "", typing: true })
 
@@ -219,7 +221,7 @@ export const useChatbotStore = create<ChatbotState>()(
                   ...c,
                   title: c.messages.length <= 1 ? trimmed.slice(0, 40) : c.title,
                   messages: [...c.messages, { id: uid(), from: "user" as const, text: trimmed, timestamp: Date.now() }],
-                  context: history.slice(-MAX_CONTEXT),
+                  context: historyForStore.slice(-MAX_CONTEXT),
                   updatedAt: Date.now(),
                 }
               : c
@@ -228,8 +230,8 @@ export const useChatbotStore = create<ChatbotState>()(
         set(appendUser)
 
         try {
-          // The backend only needs the most recent turns for context.
-          const res = await chatbotApi.query(trimmed, eventId, history.slice(-9))
+          // The backend only needs the most recent turns for context (without duplicating current message).
+          const res = await chatbotApi.query(trimmed, eventId, historyForApi)
           const reply = res.reply
           set((state) => ({
             conversations: state.conversations.map((c) =>
@@ -240,7 +242,7 @@ export const useChatbotStore = create<ChatbotState>()(
                       ...c.messages,
                       { id: uid(), from: "bot" as const, text: reply, timestamp: Date.now(), quickReplies: res.quickReplies },
                     ],
-                    context: [...history, { role: "assistant" as const, content: reply }].slice(-MAX_CONTEXT),
+                    context: [...historyForStore, { role: "assistant" as const, content: reply }].slice(-MAX_CONTEXT),
                     updatedAt: Date.now(),
                   }
                 : c

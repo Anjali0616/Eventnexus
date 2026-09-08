@@ -28,6 +28,8 @@ jobs:
           file: ./${{ matrix.service }}/Dockerfile
           push: false
           load: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
           platforms: linux/amd64
+          build-args: |
+            NEXT_PUBLIC_API_URL=http://localhost:5000/api

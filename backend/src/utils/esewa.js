@@ -18,6 +18,8 @@ const SIGNED_FIELD_NAMES = "total_amount,transaction_uuid,product_code";
 const sign = (message) =>
   crypto.createHmac("sha256", ESEWA_SECRET_KEY).update(message).digest("base64");
 
+const isValidObjectId = (id) => /^[0-9a-fA-F]{24}$/.test(String(id));
+
 // eSewa's total_amount must be formatted exactly as sent in the signed
 // message and the form field, comma-free, matching what it echoes back.
 //
@@ -39,13 +41,26 @@ const formatAmount = (amount) => toAmountNumber(amount).toFixed(2);
 // tracking a separate "pending payment" row — the UUID round-trips through
 // eSewa's signed response, so anyone tampering with it breaks the signature
 // check in verifyResponse below, making this as trustworthy as a DB lookup
-// would be, with no extra collection to manage.
-const buildTransactionUuid = (eventId, attendeeId) =>
-  `${eventId}-${attendeeId}-${Date.now()}`;
+// would be, with no extra collection to manage. Adds random entropy to prevent enumeration.
+const buildTransactionUuid = (eventId, attendeeId) => {
+  const rand = crypto.randomBytes(4).toString("hex");
+  return `${eventId}-${attendeeId}-${Date.now()}-${rand}`;
+};
 
 const parseTransactionUuid = (transactionUuid) => {
-  const [eventId, attendeeId] = String(transactionUuid).split("-");
-  return { eventId, attendeeId };
+  const parts = String(transactionUuid).split("-");
+  if (parts.length < 3) return { eventId: null, attendeeId: null, timestamp: null };
+  const eventId = parts[0];
+  const attendeeId = parts[1];
+  const timestamp = parts[2];
+  // Validate ObjectId format to prevent injection/CastError
+  if (!isValidObjectId(eventId) || !isValidObjectId(attendeeId)) return { eventId: null, attendeeId: null, timestamp: null };
+  // Optional TTL check: reject UUID older than 24h to limit replay window
+  const tsNum = Number(timestamp);
+  if (timestamp && !Number.isNaN(tsNum) && Date.now() - tsNum > 24 * 60 * 60 * 1000) {
+    return { eventId: null, attendeeId: null, timestamp: null };
+  }
+  return { eventId, attendeeId, timestamp };
 };
 
 // Builds the full set of hidden form fields the frontend auto-submits (as a
@@ -76,14 +91,27 @@ const buildPaymentForm = ({ amount, eventId, attendeeId, successUrl, failureUrl 
 };
 
 // Verifies the base64 `data` query param eSewa appends to success_url.
-// Reconstructs the signed message from signed_field_names (rather than
-// assuming our own SIGNED_FIELD_NAMES order) so this stays correct even if
-// eSewa echoes back a different field set.
+// Must pin signed_field_names and product_code; otherwise an attacker
+// could claim only a subset of fields is signed and tamper total_amount.
 const verifyResponse = (data) => {
-  const fields = String(data.signed_field_names || "").split(",");
+  const signedFieldNames = String(data.signed_field_names || "");
+  if (signedFieldNames !== SIGNED_FIELD_NAMES) return false;
+  if (String(data.product_code || "") !== ESEWA_PRODUCT_CODE) return false;
+  // Validate total_amount is numeric before signing check
+  if (data.total_amount != null && Number.isNaN(toAmountNumber(data.total_amount))) return false;
+  const fields = signedFieldNames.split(",");
   const message = fields.map((f) => `${f}=${data[f]}`).join(",");
   const expected = sign(message);
-  return expected === data.signature;
+  const sig = String(data.signature || "");
+  // Constant-time compare to prevent timing oracle
+  try {
+    const a = Buffer.from(expected, "utf8");
+    const b = Buffer.from(sig, "utf8");
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
 };
 
 // Server-to-server confirmation — required because the browser redirect
@@ -91,9 +119,15 @@ const verifyResponse = (data) => {
 // itself, mirroring why Stripe tickets are only issued from its webhook.
 const checkStatus = async ({ transactionUuid, totalAmount }) => {
   const url = `${ESEWA_STATUS_URL}?product_code=${ESEWA_PRODUCT_CODE}&total_amount=${formatAmount(totalAmount)}&transaction_uuid=${transactionUuid}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`eSewa status check responded ${res.status}`);
-  return res.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`eSewa status check responded ${res.status}`);
+    return res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 };
 
 module.exports = {

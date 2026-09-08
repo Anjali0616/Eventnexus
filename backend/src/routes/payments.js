@@ -18,16 +18,16 @@ router.get("/config", getPaymentConfig);
 router.post(
   "/checkout/:id",
   protect,
-  requireRole("attendee"),
+  requireRole("attendee", "organizer", "admin", "org_admin"),
   checkoutLimiter,
   createCheckoutSession
 );
-router.get("/checkout/status/:sessionId", protect, requireRole("attendee"), getCheckoutStatus);
+router.get("/checkout/status/:sessionId", protect, requireRole("attendee", "organizer", "admin", "org_admin"), getCheckoutStatus);
 
 router.post(
   "/esewa/initiate/:id",
   protect,
-  requireRole("attendee"),
+  requireRole("attendee", "organizer", "admin", "org_admin"),
   checkoutLimiter,
   initiateEsewaPayment
 );
@@ -38,7 +38,8 @@ router.post(
 // eventId is carried as a path segment (not a query param) because eSewa's
 // redirect appends its own `?data=...` query string to whatever URL we hand
 // it — a query param here could get clobbered, a path segment can't.
-router.get("/esewa/success/:eventId?", handleEsewaSuccess);
-router.get("/esewa/failure/:eventId?", handleEsewaFailure);
+const esewaLimiter = rateLimit({ windowMs: 60_000, max: 20 });
+router.get("/esewa/success/:eventId?", esewaLimiter, handleEsewaSuccess);
+router.get("/esewa/failure/:eventId?", esewaLimiter, handleEsewaFailure);
 
 module.exports = router;

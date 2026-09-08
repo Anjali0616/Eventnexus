@@ -17,12 +17,16 @@ export const notificationKeys = {
   unreadCount: ["notifications", "unread"] as const,
 };
 
-export function useNotifications(params: NotificationListParams = {}) {
+export function useNotifications(params: NotificationListParams = {}, options: { enabled?: boolean } = {}) {
+  const hasToken = useHasToken();
+  const enabled = options.enabled !== undefined ? options.enabled && hasToken : hasToken;
   return useQuery({
     queryKey: notificationKeys.listParams(params),
     queryFn: () => notificationsApi.list(params),
-    enabled: useHasToken(),
+    enabled,
     placeholderData: keepPreviousData,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 }
 
@@ -113,9 +117,13 @@ export function useRealtimeNotifications() {
     if (!socket) return;
 
     const onCreated = ({ notification, unread }: RealtimeNotificationPush) => {
-      queryClient.setQueryData(notificationKeys.unreadCount, { count: unread });
-      queryClient.invalidateQueries({ queryKey: notificationKeys.list });
-      queryClient.invalidateQueries({ queryKey: notificationKeys.unreadCount });
+      // Use real count if provided, otherwise increment local - avoids hard-coded 1 bug
+      if (typeof unread === "number") {
+        queryClient.setQueryData(notificationKeys.unreadCount, { count: unread });
+      } else {
+        queryClient.setQueryData(notificationKeys.unreadCount, (old: { count: number } | undefined) => ({ count: (old?.count ?? 0) + 1 }));
+      }
+      queryClient.invalidateQueries({ queryKey: notificationKeys.list, refetchType: "active" });
 
       const section = notificationsSectionForRole(
         (typeof window !== "undefined" && JSON.parse(localStorage.getItem("user") || "{}")?.role) || null

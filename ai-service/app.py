@@ -35,7 +35,8 @@ import numpy as np
 from bson import ObjectId
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+import threading
 
 import db as data
 from features import build_rows, build_pair_rows, cosine_texts, event_text
@@ -51,6 +52,8 @@ _attendance = None
 _cf = None
 _intent = None
 _match = None
+_train_lock = threading.Lock()
+_model_lock = threading.Lock()
 
 # Closed intent set shared with the backend chatbot; used to validate
 # labels an admin assigns in the training-data console.
@@ -63,92 +66,125 @@ KNOWN_INTENTS = {
 
 
 class AttendanceRequest(BaseModel):
-    events: list[dict]
+    events: list[dict] = Field(..., max_length=1000)
 
 
 class RecommendationsRequest(BaseModel):
-    user_id: str
-    organization_id: str | None = None
+    user_id: str = Field(..., min_length=1, max_length=100)
+    organization_id: str | None = Field(None, max_length=100)
 
 
 class ClassifyRequest(BaseModel):
-    message: str
+    message: str = Field(..., min_length=1, max_length=2000)
 
 
 class ParseRequest(BaseModel):
-    message: str
+    message: str = Field(..., min_length=1, max_length=2000)
 
 
 class UnderstandRequest(BaseModel):
-    message: str
-    history: list[dict] | None = None
+    message: str = Field(..., min_length=1, max_length=2000)
+    history: list[dict] | None = Field(None, max_length=20)
 
 
 class GenerateRequest(BaseModel):
-    system_prompt: str
-    user_prompt: str
-    history: list[dict] | None = None
+    system_prompt: str = Field(..., max_length=5000)
+    user_prompt: str = Field(..., max_length=5000)
+    history: list[dict] | None = Field(None, max_length=20)
 
 
 class LogIntentRequest(BaseModel):
-    message: str
-    intent: str
+    message: str = Field(..., min_length=1, max_length=2000)
+    intent: str = Field(..., min_length=1, max_length=50)
 
 
 class PatchChatlogRequest(BaseModel):
-    intent: str
+    intent: str = Field(..., min_length=1, max_length=50)
 
 
 class CollabMatchRequest(BaseModel):
-    pairs: list[dict]
+    pairs: list[dict] = Field(..., max_length=200)
 
 
 def _load_models():
     global _attendance, _cf, _intent, _match
-    _attendance = joblib.load(training.ATTENDANCE_PATH) if os.path.exists(training.ATTENDANCE_PATH) else None
-    _cf = joblib.load(training.CF_PATH) if os.path.exists(training.CF_PATH) else None
-    _intent = joblib.load(training.INTENT_PATH) if os.path.exists(training.INTENT_PATH) else None
-    _match = joblib.load(training.MATCH_PATH) if os.path.exists(training.MATCH_PATH) else None
+    with _model_lock:
+        try:
+            _attendance = joblib.load(training.ATTENDANCE_PATH) if os.path.exists(training.ATTENDANCE_PATH) else None
+        except Exception as e:
+            print(f"[load] attendance model failed: {e}")
+            _attendance = None
+        try:
+            _cf = joblib.load(training.CF_PATH) if os.path.exists(training.CF_PATH) else None
+        except Exception as e:
+            print(f"[load] cf model failed: {e}")
+            _cf = None
+        try:
+            _intent = joblib.load(training.INTENT_PATH) if os.path.exists(training.INTENT_PATH) else None
+        except Exception as e:
+            print(f"[load] intent model failed: {e}")
+            _intent = None
+        try:
+            _match = joblib.load(training.MATCH_PATH) if os.path.exists(training.MATCH_PATH) else None
+        except Exception as e:
+            print(f"[load] match model failed: {e}")
+            _match = None
 
 
 @app.on_event("startup")
 def _startup():
     # Auto-train on startup when any model is missing (cold start). Models
     # already present are left untouched to keep boot fast; retrain via /train.
-    missing = [
-        name
-        for name, path in [
-            ("attendance", training.ATTENDANCE_PATH),
-            ("cf", training.CF_PATH),
-            ("intent", training.INTENT_PATH),
-            ("collaboration_match", training.MATCH_PATH),
+    try:
+        missing = [
+            name
+            for name, path in [
+                ("attendance", training.ATTENDANCE_PATH),
+                ("cf", training.CF_PATH),
+                ("intent", training.INTENT_PATH),
+                ("collaboration_match", training.MATCH_PATH),
+            ]
+            if not os.path.exists(path)
         ]
-        if not os.path.exists(path)
-    ]
-    if missing:
-        print(f"[startup] missing models: {missing} -> training")
-        training.train_all()
-    _load_models()
+        if missing:
+            print(f"[startup] missing models: {missing} -> training")
+            try:
+                training.train_all()
+            except Exception as e:
+                print(f"[startup] training failed: {e}")
+        _load_models()
+    except Exception as e:
+        print(f"[startup] failed: {e}")
 
 
 @app.get("/health")
 def health():
+    models = {
+        "attendance": _attendance is not None,
+        "cf": _cf is not None,
+        "intent": _intent is not None,
+        "collaboration": _match is not None,
+    }
+    all_ready = all(models.values())
     return {
-        "status": "ok",
-        "models": {
-            "attendance": _attendance is not None,
-            "cf": _cf is not None,
-            "intent": _intent is not None,
-            "collaboration": _match is not None,
-        },
+        "status": "ok" if all_ready else "degraded",
+        "models": models,
     }
 
 
 @app.post("/train")
 def retrain():
-    results = training.train_all()
-    _load_models()
-    return results
+    if not _train_lock.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="Training already in progress")
+    try:
+        results = training.train_all()
+        _load_models()
+        return results
+    except Exception as e:
+        print(f"[train] failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _train_lock.release()
 
 
 def _read_meta():
@@ -188,17 +224,30 @@ def stats():
 @app.get("/chatlog")
 def list_chatlog(limit: int = 50, offset: int = 0, intent: str | None = None, search: str | None = None):
     """Labeled (message -> intent) training samples, newest first."""
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
     query = {}
     if intent:
         query["intent"] = intent
     if search:
-        query["message"] = {"$regex": re.escape(search), "$options": "i"}
+        # Limit regex length to avoid ReDoS
+        safe_search = search[:100]
+        query["message"] = {"$regex": re.escape(safe_search), "$options": "i"}
     cursor = (
         data.get_db().chatlog.find(query)
         .sort("_id", -1)
-        .skip(max(0, offset))
-        .limit(min(limit, 200))
+        .skip(offset)
+        .limit(limit)
     )
+    def _fmt_date(v):
+        if not v:
+            return None
+        if hasattr(v, "isoformat"):
+            try:
+                return v.isoformat()
+            except Exception:
+                return str(v)
+        return str(v)
     return {
         "total": data.get_db().chatlog.count_documents(query),
         "samples": [
@@ -206,7 +255,7 @@ def list_chatlog(limit: int = 50, offset: int = 0, intent: str | None = None, se
                 "id": str(s["_id"]),
                 "message": s.get("message", ""),
                 "intent": s.get("intent", ""),
-                "createdAt": s.get("createdAt", "").isoformat() if s.get("createdAt") else None,
+                "createdAt": _fmt_date(s.get("createdAt")),
             }
             for s in cursor
         ],
@@ -245,19 +294,40 @@ def delete_chatlog(sample_id: str):
 def predict_attendance(req: AttendanceRequest):
     """Batch forecast: returns one prediction per event, clipped to [0, capacity]."""
     if _attendance is None:
-        return {"predictions": []}
-    model = _attendance["model"]
-    X, ids = build_rows(req.events)
-    if X.shape[0] == 0:
-        return {"predictions": []}
-    preds = model.predict(X)
-    capacity_by_id = {str(e.get("_id")): e.get("capacity") for e in req.events}
-    out = []
-    for i, eid in enumerate(ids):
-        cap = capacity_by_id.get(eid)
-        clipped = float(np.clip(preds[i], 0, cap if cap and cap > 0 else preds[i]))
-        out.append({"event_id": eid, "predicted": round(clipped)})
-    return {"predictions": out}
+        raise HTTPException(status_code=503, detail="Attendance model not ready")
+    try:
+        model = _attendance["model"]
+        X, ids = build_rows(req.events)
+        if X.shape[0] == 0:
+            return {"predictions": []}
+        preds = model.predict(X)
+        capacity_by_id = {}
+        for e in req.events:
+            _id = e.get("_id")
+            if _id is None:
+                continue
+            cap = e.get("capacity")
+            try:
+                cap_num = float(cap) if cap is not None else None
+                if cap_num is not None and cap_num <= 0:
+                    cap_num = None
+            except (ValueError, TypeError):
+                cap_num = None
+            capacity_by_id[str(_id)] = cap_num
+        out = []
+        for i, eid in enumerate(ids):
+            cap = capacity_by_id.get(eid)
+            if cap is not None:
+                clipped = float(np.clip(preds[i], 0, cap))
+            else:
+                clipped = float(max(0, preds[i]))
+            out.append({"event_id": eid, "predicted": round(clipped)})
+        return {"predictions": out}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[predict] failed: {e}")
+        raise HTTPException(status_code=500, detail="Prediction failed")
 
 
 @app.post("/collaboration-match")
@@ -357,9 +427,22 @@ def classify_intent(req: ClassifyRequest):
     text = (req.message or "").strip().lower()
     if not text:
         return {"intent": None, "score": None}
-    scores = pipe.decision_function([text])[0]
-    idx = int(np.argmax(scores))
-    return {"intent": pipe.classes_[idx], "score": float(scores[idx])}
+    try:
+        dec = pipe.decision_function([text])
+        # Handle both single-output (1D) and multi-output (2D) cases
+        scores = dec[0] if hasattr(dec[0], "__len__") else dec
+        if not hasattr(scores, "__len__"):
+            # Binary case with single score
+            idx = 0 if scores < 0 else 1
+            # Map to class
+            if len(pipe.classes_) == 2:
+                return {"intent": pipe.classes_[idx] if idx < len(pipe.classes_) else pipe.classes_[0], "score": float(scores)}
+            return {"intent": pipe.classes_[0], "score": float(scores)}
+        idx = int(np.argmax(scores))
+        return {"intent": pipe.classes_[idx], "score": float(scores[idx])}
+    except Exception as e:
+        print(f"[classify] failed: {e}")
+        return {"intent": None, "score": None}
 
 
 @app.post("/parse")
@@ -384,7 +467,9 @@ def _extract_json(text: str) -> dict | None:
     exact match."""
     if not text:
         return None
-    match = re.search(r"\{.*\}", text, re.S)
+    # Strip markdown fences first
+    cleaned = re.sub(r"```(?:json)?", "", text)
+    match = re.search(r"\{.*?\}", cleaned, re.S)
     if not match:
         return None
     try:
@@ -410,6 +495,23 @@ def _normalize_slots(parsed: dict) -> dict:
     }
 
 
+def _sanitize_history(history: list[dict] | None) -> list[dict] | None:
+    if not history:
+        return None
+    # Limit to last 10 turns, truncate long contents, and validate roles
+    sanitized = []
+    for turn in history[-10:]:
+        if not isinstance(turn, dict):
+            continue
+        role = turn.get("role")
+        if role not in ("user", "assistant", "system"):
+            continue
+        content = str(turn.get("content", ""))[:2000]
+        if not content.strip():
+            continue
+        sanitized.append({"role": role, "content": content})
+    return sanitized if sanitized else None
+
 @app.post("/understand")
 def understand(req: UnderstandRequest):
     """LLM-first understanding: ONE call reads the message plus conversation
@@ -427,6 +529,7 @@ def understand(req: UnderstandRequest):
 
     system_prompt = (
         "You are the natural-language understanding layer for an event-management chatbot. "
+        "Be very tolerant of typos, informal spelling, and missing punctuation (e.g. 'recomend', 'evnet', 'capcity', 'neer me', 'hii', 'plz'). "
         "Read the user's LATEST message together with the conversation history and reply with ONLY a single-line "
         "JSON object — no markdown fences, no explanation — with exactly these keys:\n"
         f'"intent": one of {sorted(KNOWN_INTENTS)},\n'
@@ -437,8 +540,10 @@ def understand(req: UnderstandRequest):
         '"count": an integer if they asked for a specific number of results (e.g. "10 events"), else null\n\n'
         "Resolve short follow-ups using the history — e.g. after the bot lists upcoming events, a reply of "
         '"just 1" means quantity="one"; "how about paid ones" means price_pref="paid" for the same time_scope '
-         "as before. Use intent 'greeting' ONLY for an actual greeting or small talk with recognizable words "
-        "('hi', 'hello', 'thanks', 'how are you', 'what can you do'). Use intent 'create_event' for any request to "
+        "as before; 'that one', 'first', 'second', 'it' refer to the last listed events by position (1st/2nd). "
+        "Use intent 'greeting' ONLY for an actual greeting or small talk with recognizable words "
+        "('hi', 'hello', 'hey', 'thanks', 'how are you', 'what can you do') — tolerate minor typos ('hii', 'helo') as greeting too. "
+        "Use intent 'create_event' for any request to "
         "CREATE, HOST, PLAN, ORGANIZE, or PUBLISH a new event ('I want to host a workshop', 'how do I create an "
         "event', 'set up a new meetup') — but NOT a request to browse/list/recommend/count existing events, which "
         "belong to their own intents even if the word 'event' appears alongside a similar verb. Use intent "
@@ -452,8 +557,9 @@ def understand(req: UnderstandRequest):
         "tailored LLM answer downstream, while 'greeting' always returns the exact same canned reply, so "
         "misclassifying unclear messages as 'greeting' makes every unclear message look identical."
     )
-    reply = generate_reply(system_prompt, text, req.history)
-    parsed = _extract_json(reply)
+    safe_history = _sanitize_history(req.history)
+    reply = generate_reply(system_prompt, text, safe_history)
+    parsed = _extract_json(reply) if reply else None
     if parsed and parsed.get("intent") in KNOWN_INTENTS:
         return {"intent": parsed["intent"], "slots": _normalize_slots(parsed), "source": "llm"}
 
@@ -471,7 +577,12 @@ def generate(req: GenerateRequest):
     returned verbatim, never LLM-rewritten); this just executes the call so
     the actual API keys and HTTP/retry logic for Groq and Gemini live in
     exactly one place instead of being duplicated in Node."""
-    reply = generate_reply(req.system_prompt, req.user_prompt, req.history)
+    safe_history = _sanitize_history(req.history)
+    if not req.system_prompt.strip() or not req.user_prompt.strip():
+        raise HTTPException(status_code=400, detail="system_prompt and user_prompt required")
+    reply = generate_reply(req.system_prompt[:5000], req.user_prompt[:5000], safe_history)
+    if reply is None:
+        raise HTTPException(status_code=503, detail="LLM unavailable")
     return {"reply": reply}
 
 
@@ -480,6 +591,10 @@ def log_intent(req: LogIntentRequest):
     """Store a regex-confirmed (message, intent) label for retraining."""
     message = (req.message or "").strip().lower()
     if not message or not req.intent:
-        return {"ok": False}
+        raise HTTPException(status_code=400, detail="message and intent required")
+    if req.intent not in KNOWN_INTENTS:
+        raise HTTPException(status_code=400, detail=f"intent must be one of: {sorted(KNOWN_INTENTS)}")
+    if len(message) > 2000:
+        raise HTTPException(status_code=400, detail="message too long")
     data.insert_chat_log(message, req.intent)
     return {"ok": True}

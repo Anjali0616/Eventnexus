@@ -14,5 +14,11 @@ if [ ! -d .venv ]; then
   .venv/bin/pip install -q -r requirements.txt
 fi
 
+if [ -f .env ]; then set -a; . ./.env; set +a; fi
 PORT="${AI_PORT:-8000}"
-exec .venv/bin/uvicorn app:app --host 0.0.0.0 --port "$PORT" --reload
+# Use --reload only outside production
+if [ "${NODE_ENV:-}" = "production" ] || [ "${ENV:-}" = "production" ]; then
+  exec .venv/bin/uvicorn app:app --host 0.0.0.0 --port "$PORT" --workers 1
+else
+  exec .venv/bin/uvicorn app:app --host 0.0.0.0 --port "$PORT" --reload
+fi

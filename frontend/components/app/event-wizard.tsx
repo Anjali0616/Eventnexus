@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   Calendar,
   Check,
@@ -184,6 +184,36 @@ export function EventWizard({
     setForm((prev) => ({ ...prev, [field]: value }))
   }
 
+  // Auto-save draft to localStorage every 2s (professional: survives refresh)
+  const draftKey = `eventwizard-draft-${mode}-${initialData?._id || "new"}`
+  const [showRestore, setShowRestore] = useState(false)
+  const [lastSaved, setLastSaved] = useState<string | null>(null)
+  useEffect(() => {
+    if (mode === "create" && !initialData) {
+      const saved = localStorage.getItem(draftKey)
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved)
+          if (parsed?.title && !form.title) setShowRestore(true)
+        } catch {}
+      }
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const id = setTimeout(() => {
+      if (form.title.trim().length >= 2) {
+        localStorage.setItem(draftKey, JSON.stringify(form))
+        setLastSaved(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))
+      }
+    }, 1500)
+    return () => clearTimeout(id)
+  }, [form, draftKey])
+  const clearDraft = () => {
+    localStorage.removeItem(draftKey)
+    setShowRestore(false)
+  }
+
+  const draftValid = form.title.trim().length >= 3
   const step1Valid = form.title.trim().length >= 3 && form.description.trim().length >= 20 && !!form.category
   const needFuture = requiresFutureDate(form.status, mode)
   const dateError = needFuture ? eventDateError(form.date) : form.date && isNaN(new Date(form.date).getTime()) ? "That doesn't look like a valid date" : null
@@ -213,6 +243,10 @@ export function EventWizard({
     setImageBusy(true)
     try {
       const dataUrl = await compressImage(file)
+      if (dataUrl.length > 6_000_000) {
+        setImageError("Image still too large after compression (6MB limit) — choose a smaller file or lower resolution.")
+        return
+      }
       update("imageUrl", dataUrl)
     } catch {
       setImageError("Could not process that image — try a different file.")
@@ -303,8 +337,9 @@ export function EventWizard({
     update("speakers", form.speakers.map((sp, i) => (i === idx ? { ...sp, [field]: value } : sp)))
   const removeSpeaker = (idx: number) => update("speakers", form.speakers.filter((_, i) => i !== idx))
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSubmit = (e?: React.SyntheticEvent) => {
+    e?.preventDefault()
+    if (isPending || imageBusy) return
     // Only the Publish button (step 3) may submit. Clicking "Continue" swaps
     // this form's button into the type=submit button at the same DOM
     // position, and Chromium then fires a submit for it — without this guard
@@ -312,29 +347,86 @@ export function EventWizard({
     // the review step.
     if (step !== 3) return
     if (!step1Valid || !step2Valid) return
+    // Guard NaN
+    const capNum = Number(form.capacity)
+    const priceNum = Number(form.price)
+    if (!Number.isInteger(capNum) || capNum < 1) return
+    if (Number.isNaN(priceNum) || priceNum < 0) return
+    if (form.imageUrl && form.imageUrl.length > 6_000_000) {
+      setImageError("Image is too large after compression — choose a smaller file.")
+      return
+    }
+    clearDraft()
     onSubmit({
       ...form,
-      capacity: Number(form.capacity),
-      price: Number(form.price) || 0,
+      capacity: capNum,
+      price: priceNum || 0,
       coordinates: form.coordinates ?? undefined,
       agenda: form.agenda.filter((a) => a.time.trim() || a.title.trim()),
       speakers: form.speakers.filter((s) => s.name.trim()),
-      tags: form.tags,
-      highlights: form.highlights,
+      tags: form.tags.slice(0, 20),
+      highlights: form.highlights.slice(0, 20),
+    })
+  }
+
+  const handleSaveDraft = (e?: React.SyntheticEvent) => {
+    e?.preventDefault()
+    if (isPending || imageBusy) return
+    if (!draftValid) return
+    clearDraft()
+    // Draft saves with minimal payload — backend fills defaults for missing venue/capacity/date
+    const capNum = Number(form.capacity)
+    const priceNum = Number(form.price)
+    onSubmit({
+      ...form,
+      status: "Draft",
+      capacity: Number.isInteger(capNum) && capNum >= 1 ? capNum : 100,
+      price: Number.isNaN(priceNum) || priceNum < 0 ? 0 : priceNum,
+      coordinates: form.coordinates ?? undefined,
+      agenda: form.agenda.filter((a) => a.time.trim() || a.title.trim()),
+      speakers: form.speakers.filter((s) => s.name.trim()),
+      tags: form.tags.slice(0, 20),
+      highlights: form.highlights.slice(0, 20),
     })
   }
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <div>
-        <h1 className="font-display text-2xl font-bold tracking-tight text-ink">
-          {mode === "create" ? "Create New Event" : "Edit Event"}
-        </h1>
+        <div className="flex items-center justify-between">
+          <h1 className="font-display text-2xl font-bold tracking-tight text-ink">
+            {mode === "create" ? "Create New Event" : "Edit Event"}
+          </h1>
+          {lastSaved && <span className="text-xs text-muted-foreground">Draft auto-saved at {lastSaved}</span>}
+        </div>
         <p className="mt-1 text-sm text-muted-foreground">
           {mode === "create"
             ? "A complete, well-documented listing builds trust and drives registrations."
             : "Changes apply immediately — attendees see the updated listing as soon as you save."}
         </p>
+        {showRestore && (
+          <div className="mt-3 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="text-sm text-amber-800">Found an unsaved draft — restore it?</p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    const saved = JSON.parse(localStorage.getItem(draftKey) || "{}")
+                    if (saved?.title) setForm((prev) => ({ ...prev, ...saved }))
+                  } catch {}
+                  setShowRestore(false)
+                }}
+                className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700"
+              >
+                Restore
+              </button>
+              <button type="button" onClick={clearDraft} className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100">
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Step indicator */}
@@ -870,36 +962,50 @@ export function EventWizard({
           </div>
         )}
 
-        <div className="flex items-center justify-between pt-2">
+        <div className="flex items-center justify-between gap-3 pt-2">
           <button
             type="button"
             onClick={goBack}
             disabled={step === 1}
-            className="flex items-center gap-1.5 rounded-xl border border-border px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-0"
+            className="flex items-center gap-1.5 rounded-xl border border-border px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
           >
             <ChevronLeft className="size-4" /> Back
           </button>
 
-          {step < 3 ? (
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={goNext}
-              disabled={!stepValid}
-              className="flex items-center gap-1.5 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-50"
+              onClick={handleSaveDraft}
+              disabled={isPending || imageBusy || !draftValid}
+              title={!draftValid ? "Title (min 3 chars) required to save draft" : "Save as Draft"}
+              className="rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium text-ink hover:bg-muted disabled:opacity-50"
             >
-              Continue <ChevronRight className="size-4" />
+              {isPending ? <Loader2 className="size-4 animate-spin" /> : "Save Draft"}
             </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={isPending || !step1Valid || !step2Valid}
-              className="flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-[0_8px_20px_-10px_rgba(91,76,245,0.8)] transition-all hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-60"
-            >
-              {isPending && <Loader2 className="size-4 animate-spin" />}
-              {isPending ? "Saving…" : submitLabel}
-            </button>
-          )}
+
+            {step < 3 ? (
+              <button
+                type="button"
+                onClick={goNext}
+                disabled={!stepValid}
+                title={!stepValid ? "Complete required fields to continue" : undefined}
+                className="flex items-center gap-1.5 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-all hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-50"
+              >
+                Continue <ChevronRight className="size-4" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={isPending || imageBusy || !step1Valid || !step2Valid}
+                title={imageBusy ? "Image still processing" : undefined}
+                className="flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-[0_8px_20px_-10px_rgba(91,76,245,0.8)] transition-all hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-60"
+              >
+                {isPending && <Loader2 className="size-4 animate-spin" />}
+                {isPending ? "Saving…" : submitLabel}
+              </button>
+            )}
+          </div>
         </div>
       </form>
     </div>

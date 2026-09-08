@@ -6,9 +6,9 @@ const validate = require("../middleware/validate");
 
 const router = express.Router();
 
-router.get("/my", protect, requireRole("attendee"), getMyTickets);
+router.get("/my", protect, requireRole("attendee", "organizer", "admin", "org_admin"), getMyTickets);
 
-router.post("/:id/cancel", protect, requireRole("attendee"), cancelTicket);
+router.post("/:id/cancel", protect, requireRole("attendee", "organizer", "admin", "org_admin"), cancelTicket);
 
 router.post(
   "/verify",
