@@ -2,7 +2,8 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, Compass, Hexagon, LayoutDashboard } from "lucide-react"
+import { ArrowLeft, Compass, LayoutDashboard } from "lucide-react"
+import { Logo } from "@/components/ui/logo"
 import { useCurrentUser, roleRoutes } from "@/lib/queries/auth"
 
 // Shared "this page isn't available to you" screen, used for both genuinely
@@ -32,12 +33,9 @@ export function NotFoundScreen({
     <div className="flex min-h-screen flex-col items-center justify-center bg-background px-6 py-16 text-center">
       <Link
         href="/"
-        className="mb-10 inline-flex items-center gap-2 transition-opacity hover:opacity-80"
+        className="mb-10 inline-flex items-center transition-opacity hover:opacity-80"
       >
-        <span className="bg-brand-gradient flex size-8 items-center justify-center rounded-lg text-white">
-          <Hexagon className="size-5" strokeWidth={2.5} />
-        </span>
-        <span className="font-display text-lg font-bold text-ink">EventNexus</span>
+        <Logo className="h-8" />
       </Link>
 
       <div className="relative">

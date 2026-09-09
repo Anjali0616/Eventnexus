@@ -1,7 +1,8 @@
 "use client"
 
 import Link from "next/link"
-import { Hexagon, LayoutDashboard } from "lucide-react"
+import { LayoutDashboard } from "lucide-react"
+import { Logo } from "@/components/ui/logo"
 import { useCurrentUser, useLogout, roleRoutes } from "@/lib/queries/auth"
 
 const links = [
@@ -24,11 +25,8 @@ export function Navbar() {
   return (
     <header className="fixed inset-x-0 top-0 z-50 border-b border-border/80 bg-background shadow-[0_2px_18px_rgba(15,23,42,0.06)]">
       <nav className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
-        <Link href="/" className="flex items-center gap-2">
-          <span className="bg-brand-gradient flex size-8 items-center justify-center rounded-lg text-primary-foreground">
-            <Hexagon className="size-5" strokeWidth={2.5} />
-          </span>
-          <span className="font-display text-xl font-bold tracking-tight text-ink">EventNexus</span>
+        <Link href="/" className="flex items-center transition-opacity hover:opacity-80">
+          <Logo className="h-8" priority />
         </Link>
 
         <ul className="hidden items-center gap-8 md:flex">

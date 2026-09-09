@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, type ReactNode } from "react"
 import Link from "next/link"
-import { Hexagon, ShieldCheck, Sparkles, Cloud } from "lucide-react"
+import { ShieldCheck, Sparkles, Cloud } from "lucide-react"
+import { Logo } from "@/components/ui/logo"
 import { ensureGsapAsync, prefersReducedMotion } from "@/lib/gsap"
 
 const chips = [
@@ -58,11 +59,8 @@ export function AuthShell({
           aria-hidden
           className="auth-orb pointer-events-none absolute -right-20 top-1/3 size-96 rounded-full bg-white/20 blur-3xl"
         />
-        <Link href="/" className="relative flex items-center gap-2">
-          <span className="flex size-9 items-center justify-center rounded-lg bg-white/15">
-            <Hexagon className="size-5" strokeWidth={2.5} />
-          </span>
-          <span className="font-display text-xl font-bold">EventNexus</span>
+        <Link href="/" className="relative flex items-center transition-opacity hover:opacity-80">
+          <Logo onDark className="h-9" priority />
         </Link>
 
         <div className="relative">
@@ -92,11 +90,8 @@ export function AuthShell({
       {/* Right form */}
       <div className="flex items-center justify-center px-6 py-12">
         <div className="w-full max-w-md">
-          <Link href="/" className="mb-8 flex items-center gap-2 lg:hidden">
-            <span className="bg-brand-gradient flex size-8 items-center justify-center rounded-lg text-white">
-              <Hexagon className="size-5" strokeWidth={2.5} />
-            </span>
-            <span className="font-display text-xl font-bold text-ink">EventNexus</span>
+          <Link href="/" className="mb-8 flex items-center transition-opacity hover:opacity-80 lg:hidden">
+            <Logo className="h-8" />
           </Link>
           <h1 className="font-display auth-field text-3xl font-bold tracking-tight text-ink">
             {heading}

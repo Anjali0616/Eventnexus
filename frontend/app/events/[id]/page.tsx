@@ -10,7 +10,6 @@ import {
   Clock,
   CreditCard,
   Globe,
-  Hexagon,
   ListChecks,
   Loader2,
   LogIn,
@@ -28,6 +27,7 @@ import {
   XCircle,
 } from "lucide-react"
 import { Reveal } from "@/components/anim/reveal"
+import { Logo } from "@/components/ui/logo"
 import { QrCode } from "@/components/app/qr-code"
 import { EventQrPoster } from "@/components/app/event-qr-poster"
 import { VenueMap } from "@/components/app/venue-map"
@@ -192,11 +192,8 @@ export default function PublicEventPage({ params }: { params: Promise<{ id: stri
     <div className="min-h-screen bg-background">
       <header className="border-b border-border bg-card/60 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-6">
-          <Link href="/" className="flex items-center gap-2">
-            <span className="bg-brand-gradient flex size-8 items-center justify-center rounded-lg text-primary-foreground">
-              <Hexagon className="size-5" strokeWidth={2.5} />
-            </span>
-            <span className="font-display text-lg font-bold tracking-tight text-ink">EventNexus</span>
+          <Link href="/" className="flex items-center transition-opacity hover:opacity-80">
+            <Logo className="h-7" />
           </Link>
 
           {user ? (

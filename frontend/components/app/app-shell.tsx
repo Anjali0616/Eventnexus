@@ -4,7 +4,6 @@ import { useEffect, useRef, useState, type ReactNode } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
-  Hexagon,
   LogOut,
   HelpCircle,
   Search,
@@ -17,6 +16,7 @@ import dynamic from "next/dynamic"
 import { adminNav, attendeeNav, organizerNav, orgAdminNav } from "@/components/app/nav-configs"
 import { HelpDialog } from "@/components/app/help-dialog"
 import { NotificationBell } from "@/components/app/notification-bell"
+import { Logo } from "@/components/ui/logo"
 import { ensureGsapAsync, prefersReducedMotion } from "@/lib/gsap"
 
 const EventBot = dynamic(() => import("@/components/chatbot/event-bot").then((m) => m.EventBot), {
@@ -293,11 +293,8 @@ export function AppShell({ children, role, userName, title = "Welcome back" }: A
         ref={aside}
         className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-border bg-card lg:flex"
       >
-        <Link href="/" className="flex items-center gap-2 border-b border-border px-5 py-4 transition-opacity hover:opacity-80">
-          <span className="bg-brand-gradient flex size-8 items-center justify-center rounded-lg text-white">
-            <Hexagon className="size-5" strokeWidth={2.5} />
-          </span>
-          <span className="font-display text-lg font-bold text-ink">EventNexus</span>
+        <Link href="/" className="flex items-center border-b border-border px-5 py-4 transition-opacity hover:opacity-80">
+          <Logo className="h-7" />
         </Link>
 
         <div className="flex items-center gap-3 border-b border-border px-5 py-4">
@@ -342,11 +339,8 @@ export function AppShell({ children, role, userName, title = "Welcome back" }: A
           />
           <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col border-r border-border bg-card shadow-2xl">
             <div className="flex items-center justify-between border-b border-border px-5 py-4">
-              <Link href="/" onClick={closeMobileNav} className="flex items-center gap-2 transition-opacity hover:opacity-80">
-                <span className="bg-brand-gradient flex size-8 items-center justify-center rounded-lg text-white">
-                  <Hexagon className="size-5" strokeWidth={2.5} />
-                </span>
-                <span className="font-display text-lg font-bold text-ink">EventNexus</span>
+              <Link href="/" onClick={closeMobileNav} className="flex items-center transition-opacity hover:opacity-80">
+                <Logo className="h-7" />
               </Link>
               <button
                 onClick={closeMobileNav}

@@ -17,6 +17,7 @@ import {
   Activity,
   ChevronDown
 } from "lucide-react"
+import { Logo } from "@/components/ui/logo"
 import { ensureGsapAsync, prefersReducedMotion } from "@/lib/gsap"
 import dynamic from "next/dynamic"
 const ContainerScroll = dynamic(() => import("@/components/ui/container-scroll-animation").then((m) => m.ContainerScroll), {
@@ -131,11 +132,8 @@ export function Hero() {
             <aside className="w-48 hidden md:flex flex-col border-r border-white/5 bg-[#07080c] p-4 shrink-0 justify-between">
               <div className="space-y-6">
                 {/* Brand Logo & Name */}
-                <div className="flex items-center gap-2 px-1">
-                  <div className="bg-brand-gradient flex size-7 items-center justify-center rounded-lg text-white font-bold">
-                    E
-                  </div>
-                  <span className="font-display text-sm font-bold text-white tracking-tight">EventNexus</span>
+                <div className="flex items-center px-1">
+                  <Logo onDark className="h-5" />
                 </div>
 
                 {/* Navigation Items */}

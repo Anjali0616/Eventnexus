@@ -6,7 +6,6 @@ import {
   ArrowLeft,
   Calendar,
   Clock,
-  Hexagon,
   Loader2,
   MapPin,
   Ticket,
@@ -17,6 +16,7 @@ import {
   Share2,
 } from "lucide-react"
 import { Reveal } from "@/components/anim/reveal"
+import { Logo } from "@/components/ui/logo"
 import { useEvent } from "@/lib/queries/events"
 import { formatPrice, isFreeEvent } from "@/lib/price"
 import { hasQrHint, buildShareText, buildWhatsAppUrl } from "@/lib/qr"
@@ -100,11 +100,8 @@ export function PublicEventLanding({ eventId }: { eventId: string }) {
           app sidebar/topbar a first-time visitor has no use for yet. */}
       <header className="border-b border-border bg-card">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
-          <Link href="/" className="flex items-center gap-2 transition-opacity hover:opacity-80">
-            <span className="bg-brand-gradient flex size-8 items-center justify-center rounded-lg text-white">
-              <Hexagon className="size-5" strokeWidth={2.5} />
-            </span>
-            <span className="font-display text-lg font-bold text-ink">EventNexus</span>
+          <Link href="/" className="flex items-center transition-opacity hover:opacity-80">
+            <Logo className="h-7" />
           </Link>
           <Link
             href={`/login${redirectParam}`}
