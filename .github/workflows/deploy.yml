@@ -299,8 +299,15 @@ jobs:
             # ------------------------------------------------------------------
             # 2) Authenticate to GHCR on EC2 (needed only for private images)
             # ------------------------------------------------------------------
+            # Non-fatal: this repo is public, so ghcr.io/anjali0616/event-* pull
+            # anonymously. GITHUB_TOKEN is scoped to the Actions run and is often
+            # rejected by GHCR from outside it ("denied: denied") — that must not
+            # abort the deploy. Set GHCR_PAT (read:packages) only if the packages
+            # are ever made private.
             if [ -n "${DEPLOY_GHCR_TOKEN:-}" ]; then
-              printf '%s' "$DEPLOY_GHCR_TOKEN" | docker login ghcr.io -u "$DEPLOY_GHCR_USER" --password-stdin
+              printf '%s' "$DEPLOY_GHCR_TOKEN" \
+                | docker login ghcr.io -u "$DEPLOY_GHCR_USER" --password-stdin \
+                || echo ">> GHCR login failed — continuing with anonymous pull (packages are public)"
             fi
 
             # ------------------------------------------------------------------
