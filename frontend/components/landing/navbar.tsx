@@ -6,10 +6,10 @@ import { Logo } from "@/components/ui/logo"
 import { useCurrentUser, useLogout, roleRoutes } from "@/lib/queries/auth"
 
 const links = [
-  { label: "Features", href: "#features" },
-  { label: "How It Works", href: "#how" },
-  { label: "Pricing", href: "#how" },
-  { label: "Contact", href: "mailto:hello@eventnexus.app" },
+  { label: "Features", href: "/#features" },
+  { label: "How It Works", href: "/#how" },
+  { label: "Pricing", href: "/pricing" },
+  { label: "Contact", href: "/contact" },
 ]
 
 // Shared role→home map rather than another local copy that can drift out
