@@ -3,70 +3,71 @@ import { ArrowRight } from "lucide-react"
 import { Reveal } from "@/components/anim/reveal"
 import { Logo } from "@/components/ui/logo"
 
-type FooterLink = { label: string; href: string; external?: boolean }
+type FooterLink = { label: string; href: string; hint?: string }
 
-// Every link points at a route or in-page anchor that actually exists in this
-// codebase (see app/ and the landing section ids) — no dead "#" placeholders.
+// Every href resolves to a real route or in-page anchor in this app.
+// Notes on the two "demo" targets:
+//  - Browse Events → /events is the public attendee browsing experience
+//    (search + filters + listings), NOT an account dashboard.
+//  - Dashboard → /analytics renders the charts dashboard from the public
+//    events feed; it needs no login and never touches a real account.
 const columns: { title: string; links: FooterLink[] }[] = [
   {
-    title: "Product",
+    title: "Explore",
     links: [
-      { label: "Features", href: "/#features" },
-      { label: "How It Works", href: "/#how" },
-      { label: "The Problem", href: "/#problems" },
       { label: "Browse Events", href: "/events" },
+      { label: "How It Works", href: "/#how" },
+      { label: "Recommendations", href: "/recommendations" },
+    ],
+  },
+  {
+    title: "For Organizations",
+    links: [
+      { label: "Register an Organization", href: "/org-register" },
+      { label: "Create Events", href: "/organizer/events/create" },
+      { label: "Collaboration", href: "/organizer/collaboration" },
     ],
   },
   {
     title: "Platform",
     links: [
-      { label: "Dashboard", href: "/dashboard" },
+      { label: "Dashboard", href: "/analytics", hint: "Live demo — no sign-in" },
       { label: "For Organizers", href: "/organizer" },
-      { label: "Admin Console", href: "/admin" },
-      { label: "Recommendations", href: "/recommendations" },
     ],
   },
   {
-    title: "Account",
+    title: "Support",
     links: [
-      { label: "Log In", href: "/login" },
-      { label: "Create Account", href: "/register" },
-      { label: "Register an Org", href: "/org-register" },
-      { label: "My Tickets", href: "/my-tickets" },
-    ],
-  },
-  {
-    title: "Connect",
-    links: [
-      { label: "GitHub", href: "https://github.com", external: true },
-      { label: "Twitter", href: "https://twitter.com", external: true },
-      { label: "LinkedIn", href: "https://linkedin.com", external: true },
-      { label: "Contact", href: "mailto:hello@eventnexus.app" },
+      { label: "Contact Us", href: "/contact" },
+      { label: "FAQs", href: "/faqs" },
+      { label: "Privacy Policy", href: "/privacy" },
+      { label: "Terms & Conditions", href: "/terms" },
     ],
   },
 ]
 
-function FooterLinkItem({ link }: { link: FooterLink }) {
-  const className = "text-sm text-white/50 transition-colors hover:text-white"
+const LINKEDIN_URL = "https://www.linkedin.com/in/anjali-mishra-tech2025/"
 
-  if (link.external) {
-    return (
-      <a href={link.href} target="_blank" rel="noreferrer noopener" className={className}>
-        {link.label}
-      </a>
-    )
-  }
-  if (link.href.startsWith("mailto:") || link.href.startsWith("#")) {
-    return (
-      <a href={link.href} className={className}>
-        {link.label}
-      </a>
-    )
-  }
-  return (
-    <Link href={link.href} className={className}>
+function FooterLinkItem({ link }: { link: FooterLink }) {
+  const base = "text-sm text-white/55 transition-colors hover:text-white"
+  const inner = link.href.startsWith("#") ? (
+    <a href={link.href} className={base}>
+      {link.label}
+    </a>
+  ) : (
+    <Link href={link.href} className={base}>
       {link.label}
     </Link>
+  )
+  return (
+    <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+      {inner}
+      {link.hint && (
+        <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] font-medium text-white/45">
+          {link.hint}
+        </span>
+      )}
+    </span>
   )
 }
 
@@ -92,22 +93,21 @@ export function Footer() {
         </div>
       </Reveal>
 
-      {/* links */}
+      {/* link grid */}
       <div className="mx-auto max-w-7xl px-6 pb-12">
-        <div className="grid grid-cols-2 gap-10 border-t border-white/10 pt-12 sm:grid-cols-3 lg:grid-cols-6">
-          <div className="col-span-2 sm:col-span-3 lg:col-span-2">
+        <div className="grid grid-cols-2 gap-x-8 gap-y-10 border-t border-white/10 pt-12 md:grid-cols-3 lg:grid-cols-6">
+          <div className="col-span-2 md:col-span-3 lg:col-span-2">
             <Link href="/" className="inline-flex transition-opacity hover:opacity-80">
               <Logo onDark className="h-8" />
             </Link>
-
-            <p className="mt-4 max-w-xs text-sm leading-relaxed text-white/50">
-              AI-enabled secure cloud-based event management for multi-organization collaboration.
+            <p className="mt-4 max-w-xs text-sm leading-relaxed text-white/55">
+              AI-enabled, secure, cloud-based event management for multi-organization collaboration.
             </p>
           </div>
 
           {columns.map((col) => (
-            <div key={col.title}>
-              <h4 className="font-display text-sm font-semibold">{col.title}</h4>
+            <nav key={col.title} aria-label={col.title}>
+              <h3 className="font-display text-sm font-semibold text-white">{col.title}</h3>
               <ul className="mt-4 space-y-3">
                 {col.links.map((l) => (
                   <li key={l.label}>
@@ -115,13 +115,24 @@ export function Footer() {
                   </li>
                 ))}
               </ul>
-            </div>
+            </nav>
           ))}
         </div>
 
-        <div className="mt-12 flex flex-col items-center justify-between gap-3 border-t border-white/10 pt-6 text-center text-xs text-white/40 sm:flex-row sm:text-left">
+        {/* base bar */}
+        <div className="mt-12 flex flex-col items-center justify-between gap-3 border-t border-white/10 pt-6 text-center text-xs text-white/45 sm:flex-row sm:text-left">
           <span>© {new Date().getFullYear()} EventNexus. All rights reserved.</span>
-          <span className="font-mono">Built with MERN Stack · Hosted on AWS</span>
+          <span>
+            Built by{" "}
+            <a
+              href={LINKEDIN_URL}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="font-medium text-white/70 underline-offset-4 transition-colors hover:text-white hover:underline"
+            >
+              Anjali Mishra
+            </a>
+          </span>
         </div>
       </div>
     </footer>
