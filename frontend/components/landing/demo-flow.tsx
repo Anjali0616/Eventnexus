@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import {
   Dialog,
   DialogContent,
@@ -10,9 +10,6 @@ import {
 import {
   Play,
   Search,
-  Calendar,
-  MapPin,
-  Users,
   Ticket,
   QrCode,
   Sparkles,
@@ -20,18 +17,33 @@ import {
   ChevronLeft,
   ChevronRight,
   Pause,
+  RotateCcw,
+  Building2,
+  CreditCard,
+  ScanLine,
+  BarChart3,
+  Wand2,
 } from "lucide-react"
+
+type Role = "Organizer" | "Attendee" | "System"
 
 type Step = {
   key: string
+  role: Role
   title: string
   caption: string
   frame: ReactNode
 }
 
-const AUTOPLAY_MS = 4200
+const AUTOPLAY_MS = 4600
 
-/** A single stylised app "screen" used inside each demo step. */
+const roleStyle: Record<Role, string> = {
+  Organizer: "bg-primary/15 text-primary",
+  Attendee: "bg-secondary/15 text-secondary",
+  System: "bg-flame/15 text-flame",
+}
+
+/** A stylised app "screen" shell used inside each demo step. */
 function Screen({ children }: { children: ReactNode }) {
   return (
     <div className="relative h-full w-full overflow-hidden rounded-xl border border-white/10 bg-[#0a0b10] text-[11px] text-[#a9adc1]">
@@ -46,14 +58,19 @@ function Screen({ children }: { children: ReactNode }) {
   )
 }
 
+function Row({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="flex items-center justify-between rounded-md border border-white/5 bg-white/[0.03] px-2.5 py-2">
+      <span className="text-[10px] text-white/40">{label}</span>
+      <span className={`text-[10px] font-semibold ${accent ? "text-secondary" : "text-white"}`}>{value}</span>
+    </div>
+  )
+}
+
 function EventCard({ title, meta, accent }: { title: string; meta: string; accent?: boolean }) {
   return (
-    <div
-      className={`rounded-lg border p-3 ${
-        accent ? "border-primary/40 bg-primary/10" : "border-white/5 bg-white/[0.03]"
-      }`}
-    >
-      <div className="h-12 rounded-md bg-brand-gradient opacity-80" />
+    <div className={`rounded-lg border p-3 ${accent ? "border-primary/40 bg-primary/10" : "border-white/5 bg-white/[0.03]"}`}>
+      <div className="h-11 rounded-md bg-brand-gradient opacity-80" />
       <div className="mt-2 text-[11px] font-semibold text-white">{title}</div>
       <div className="mt-0.5 text-[10px] text-white/40">{meta}</div>
     </div>
@@ -62,9 +79,32 @@ function EventCard({ title, meta, accent }: { title: string; meta: string; accen
 
 const steps: Step[] = [
   {
+    key: "create",
+    role: "Organizer",
+    title: "An organizer builds an event",
+    caption: "Set up under an organization with registration rules, capacity, and pricing — free or paid.",
+    frame: (
+      <Screen>
+        <div className="flex items-center gap-1.5 text-[10px] font-semibold text-primary">
+          <Building2 className="size-3.5" /> Acme Events · New event
+        </div>
+        <div className="mt-3 space-y-2">
+          <Row label="Title" value="AI Builders Meetup" />
+          <Row label="Date · Venue" value="Mar 20 · Online" />
+          <Row label="Capacity" value="200 seats" />
+          <Row label="Ticket price" value="Free" accent />
+        </div>
+        <button className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-primary py-2 text-[11px] font-semibold text-primary-foreground">
+          <Wand2 className="size-3.5" /> Publish event
+        </button>
+      </Screen>
+    ),
+  },
+  {
     key: "discover",
-    title: "Discover events",
-    caption: "Browse everything happening — filter by category, date, price or how close it is to you.",
+    role: "Attendee",
+    title: "Attendees discover it",
+    caption: "The event goes live in Discover — searchable and filterable by category, date, price, or distance.",
     frame: (
       <Screen>
         <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
@@ -72,7 +112,7 @@ const steps: Step[] = [
           <span className="text-[10px] text-white/40">Search events…</span>
         </div>
         <div className="mt-3 grid grid-cols-3 gap-2">
-          <EventCard title="Product Summit 2026" meta="Mar 14 · Kathmandu" />
+          <EventCard title="Product Summit" meta="Mar 14 · Kathmandu" />
           <EventCard title="AI Builders Meetup" meta="Mar 20 · Online" accent />
           <EventCard title="Design Systems Day" meta="Apr 02 · Pokhara" />
           <EventCard title="Founders Brunch" meta="Apr 06 · Lalitpur" />
@@ -83,80 +123,20 @@ const steps: Step[] = [
     ),
   },
   {
-    key: "details",
-    title: "See the details",
-    caption: "Open an event for the full picture — schedule, venue, capacity and live registration count.",
-    frame: (
-      <Screen>
-        <div className="h-20 rounded-lg bg-brand-gradient opacity-80" />
-        <div className="mt-3 text-sm font-bold text-white">AI Builders Meetup</div>
-        <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-white/50">
-          <span className="flex items-center gap-1.5"><Calendar className="size-3" /> Mar 20, 2026 · 6:00 PM</span>
-          <span className="flex items-center gap-1.5"><MapPin className="size-3" /> Online — link on register</span>
-          <span className="flex items-center gap-1.5"><Users className="size-3" /> 128 / 200 registered</span>
-          <span className="flex items-center gap-1.5"><Sparkles className="size-3 text-secondary" /> ~172 expected</span>
-        </div>
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
-          <div className="h-full w-[64%] rounded-full bg-brand-gradient" />
-        </div>
-      </Screen>
-    ),
-  },
-  {
-    key: "register",
-    title: "Register in one click",
-    caption: "Free events register instantly. Paid ones go straight to secure checkout — eSewa or card.",
-    frame: (
-      <Screen>
-        <div className="text-sm font-bold text-white">AI Builders Meetup</div>
-        <div className="mt-1 text-[10px] text-white/40">Free · 72 spots left</div>
-        <button className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-primary py-2.5 text-[11px] font-semibold text-primary-foreground">
-          <Check className="size-3.5" /> Register now
-        </button>
-        <div className="mt-3 rounded-lg border border-secondary/30 bg-secondary/10 p-2.5 text-[10px] text-secondary">
-          You're in — ticket &amp; QR generated instantly.
-        </div>
-      </Screen>
-    ),
-  },
-  {
-    key: "ticket",
-    title: "Get your ticket",
-    caption: "A scannable QR ticket lands in your account and inbox — ready for check-in at the door.",
-    frame: (
-      <Screen>
-        <div className="mx-auto mt-1 w-44 rounded-xl border border-white/10 bg-white p-3 text-center text-ink">
-          <div className="text-[10px] font-semibold text-primary">EVENTNEXUS · TICKET</div>
-          <div className="mx-auto mt-2 grid size-24 grid-cols-6 gap-0.5">
-            {Array.from({ length: 36 }).map((_, i) => (
-              <span key={i} className={`rounded-[1px] ${(i * 7) % 3 === 0 ? "bg-ink" : "bg-transparent"}`} />
-            ))}
-          </div>
-          <div className="mt-2 flex items-center justify-center gap-1 text-[10px] font-semibold">
-            <Ticket className="size-3" /> AI Builders Meetup
-          </div>
-          <div className="text-[9px] text-muted-foreground">Seat GA · Mar 20</div>
-        </div>
-        <div className="mt-3 flex items-center justify-center gap-1.5 text-[10px] text-white/40">
-          <QrCode className="size-3" /> Scan at entry to check in
-        </div>
-      </Screen>
-    ),
-  },
-  {
     key: "recommend",
-    title: "Get smarter picks",
-    caption: "The more you attend, the sharper your recommendations get — ranked by fit, distance and demand.",
+    role: "System",
+    title: "AI ranks the best matches",
+    caption: "The recommender scores every event by fit, distance, and demand — and forecasts turnout.",
     frame: (
       <Screen>
-        <div className="flex items-center gap-1.5 text-[10px] font-semibold text-primary">
-          <Sparkles className="size-3.5" /> Recommended for you
+        <div className="flex items-center gap-1.5 text-[10px] font-semibold text-flame">
+          <Sparkles className="size-3.5" /> Recommended for Priya
         </div>
         <div className="mt-3 space-y-2">
           {[
-            { t: "Cloud Native Con", r: "Matches your last 3 events · 4 km away", s: 96 },
-            { t: "Growth Workshop", r: "Popular with people like you", s: 89 },
-            { t: "Design Systems Day", r: "New in a category you follow", s: 81 },
+            { t: "AI Builders Meetup", r: "Matches your last 3 events · online", s: 96 },
+            { t: "Cloud Native Con", r: "Popular with people like you · 4 km", s: 88 },
+            { t: "Design Systems Day", r: "New in a category you follow", s: 79 },
           ].map((x) => (
             <div key={x.t} className="flex items-center gap-3 rounded-lg border border-white/5 bg-white/[0.03] p-2.5">
               <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-[10px] font-bold text-white">
@@ -172,6 +152,106 @@ const steps: Step[] = [
       </Screen>
     ),
   },
+  {
+    key: "register",
+    role: "Attendee",
+    title: "Register or pay securely",
+    caption: "Free events register in one click. Paid ones route to Stripe or eSewa — NPR auto-converts for cards.",
+    frame: (
+      <Screen>
+        <div className="text-sm font-bold text-white">AI Builders Meetup</div>
+        <div className="mt-1 text-[10px] text-white/40">Free · 72 spots left</div>
+        <button className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-primary py-2.5 text-[11px] font-semibold text-primary-foreground">
+          <Check className="size-3.5" /> Register now
+        </button>
+        <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-white/40">
+          <span className="flex items-center justify-center gap-1 rounded-md border border-white/10 py-1.5">
+            <CreditCard className="size-3" /> Card / Stripe
+          </span>
+          <span className="flex items-center justify-center gap-1 rounded-md border border-white/10 py-1.5">eSewa · NPR</span>
+        </div>
+        <div className="mt-2 rounded-lg border border-secondary/30 bg-secondary/10 p-2 text-[10px] text-secondary">
+          Confirmed — seat held, ticket generating…
+        </div>
+      </Screen>
+    ),
+  },
+  {
+    key: "ticket",
+    role: "System",
+    title: "A QR ticket is issued",
+    caption: "Signed QR ticket lands in the attendee's account and inbox — impossible to forge, instant to scan.",
+    frame: (
+      <Screen>
+        <div className="mx-auto mt-1 w-44 rounded-xl border border-white/10 bg-white p-3 text-center text-ink">
+          <div className="text-[10px] font-semibold text-primary">EVENTNEXUS · TICKET</div>
+          <div className="mx-auto mt-2 grid size-24 grid-cols-6 gap-0.5">
+            {Array.from({ length: 36 }).map((_, i) => (
+              <span key={i} className={`rounded-[1px] ${(i * 7) % 3 === 0 ? "bg-ink" : "bg-transparent"}`} />
+            ))}
+          </div>
+          <div className="mt-2 flex items-center justify-center gap-1 text-[10px] font-semibold">
+            <Ticket className="size-3" /> AI Builders Meetup
+          </div>
+          <div className="text-[9px] text-muted-foreground">GA · Mar 20 · Priya S.</div>
+        </div>
+        <div className="mt-3 flex items-center justify-center gap-1.5 text-[10px] text-white/40">
+          <QrCode className="size-3" /> Emailed + saved to My Tickets
+        </div>
+      </Screen>
+    ),
+  },
+  {
+    key: "checkin",
+    role: "Organizer",
+    title: "Scan-and-check-in at the door",
+    caption: "Staff scan the QR from any phone. Each ticket verifies once — replays and screenshots are rejected.",
+    frame: (
+      <Screen>
+        <div className="flex items-center gap-1.5 text-[10px] font-semibold text-primary">
+          <ScanLine className="size-3.5" /> Door check-in · AI Builders Meetup
+        </div>
+        <div className="mt-3 rounded-lg border border-secondary/40 bg-secondary/10 p-3">
+          <div className="flex items-center gap-2 text-[11px] font-semibold text-secondary">
+            <Check className="size-3.5" strokeWidth={3} /> Priya S. — checked in
+          </div>
+          <div className="mt-1 text-[10px] text-white/40">Ticket #A1F9 · 6:02 PM · valid</div>
+        </div>
+        <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+          <Row label="Checked in" value="128" />
+          <Row label="Expected" value="172" />
+          <Row label="No-shows" value="9" />
+        </div>
+      </Screen>
+    ),
+  },
+  {
+    key: "analytics",
+    role: "Organizer",
+    title: "Live analytics + next-event insight",
+    caption: "Real-time attendance, revenue, and channel performance — plus AI guidance on when to run the next one.",
+    frame: (
+      <Screen>
+        <div className="flex items-center gap-1.5 text-[10px] font-semibold text-primary">
+          <BarChart3 className="size-3.5" /> Event analytics
+        </div>
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          <Row label="Registered" value="182" />
+          <Row label="Attendance" value="70%" accent />
+          <Row label="Revenue" value="$0" />
+        </div>
+        <div className="mt-3 flex items-end gap-1.5">
+          {[38, 52, 47, 63, 71, 66, 80].map((h, i) => (
+            <div key={i} className="flex-1 rounded-t bg-brand-gradient" style={{ height: `${h}%` }} />
+          ))}
+        </div>
+        <div className="mt-3 flex items-start gap-1.5 rounded-lg bg-flame/10 p-2 text-[10px] text-flame">
+          <Sparkles className="mt-0.5 size-3 shrink-0" />
+          Best next slot: a Thursday evening in 5–6 weeks. Email your waitlist first.
+        </div>
+      </Screen>
+    ),
+  },
 ]
 
 export function DemoFlow({ trigger }: { trigger: ReactNode }) {
@@ -180,17 +260,18 @@ export function DemoFlow({ trigger }: { trigger: ReactNode }) {
   const [paused, setPaused] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const go = (next: number) => setI((next + steps.length) % steps.length)
+  const last = i === steps.length - 1
+  const go = useCallback((next: number) => setI((next + steps.length) % steps.length), [])
 
   useEffect(() => {
-    if (!open || paused) return
-    timer.current = setTimeout(() => setI((v) => (v + 1) % steps.length), AUTOPLAY_MS)
+    if (!open || paused || last) return
+    timer.current = setTimeout(() => setI((v) => v + 1), AUTOPLAY_MS)
     return () => {
       if (timer.current) clearTimeout(timer.current)
     }
-  }, [open, paused, i])
+  }, [open, paused, last, i])
 
-  // Reset to the first step whenever the dialog is reopened.
+  // Restart from the top each time the dialog opens.
   useEffect(() => {
     if (open) {
       setI(0)
@@ -204,7 +285,7 @@ export function DemoFlow({ trigger }: { trigger: ReactNode }) {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent className="max-w-2xl overflow-hidden p-0">
-        <DialogTitle className="sr-only">EventNexus product demo</DialogTitle>
+        <DialogTitle className="sr-only">EventNexus system walkthrough</DialogTitle>
 
         <div
           className="bg-[#0a0b10] p-5 sm:p-6"
@@ -218,15 +299,15 @@ export function DemoFlow({ trigger }: { trigger: ReactNode }) {
                 key={s.key}
                 onClick={() => go(idx)}
                 aria-label={`Go to step ${idx + 1}: ${s.title}`}
-                className="group relative h-1 flex-1 overflow-hidden rounded-full bg-white/10"
+                className="relative h-1 flex-1 overflow-hidden rounded-full bg-white/10"
               >
                 <span
-                  key={idx === i ? `run-${i}-${paused}` : `idle-${idx}`}
+                  key={idx === i ? `run-${i}-${paused}-${last}` : `idle-${idx}-${idx < i}`}
                   className={`absolute inset-0 rounded-full bg-white/70 ${
                     idx < i ? "translate-x-0" : idx === i ? "" : "-translate-x-full"
                   }`}
                   style={
-                    idx === i && !paused
+                    idx === i && !paused && !last
                       ? { animation: `demo-fill ${AUTOPLAY_MS}ms linear forwards` }
                       : idx === i
                         ? { transform: "translateX(0)" }
@@ -240,32 +321,42 @@ export function DemoFlow({ trigger }: { trigger: ReactNode }) {
           {/* the screen */}
           <div className="mt-4 aspect-[16/10] w-full">{step.frame}</div>
 
-          {/* caption + controls */}
-          <div className="mt-4 flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-white/40">
-                Step {i + 1} of {steps.length}
-                {paused && <Pause className="size-3" />}
-              </div>
-              <h3 className="font-display mt-1 text-base font-bold text-white">{step.title}</h3>
-              <p className="mt-1 text-sm leading-relaxed text-white/60">{step.caption}</p>
+          {/* caption */}
+          <div className="mt-4">
+            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-white/40">
+              <span className={`rounded-full px-2 py-0.5 ${roleStyle[step.role]}`}>{step.role}</span>
+              Step {i + 1} of {steps.length}
+              {paused && !last && <Pause className="size-3" />}
             </div>
-            <div className="flex shrink-0 gap-1.5 pt-1">
+            <h3 className="font-display mt-2 text-base font-bold text-white">{step.title}</h3>
+            <p className="mt-1 text-sm leading-relaxed text-white/60">{step.caption}</p>
+          </div>
+
+          {/* advance controls */}
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <button
+              onClick={() => go(i - 1)}
+              disabled={i === 0}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-[13px] font-medium text-white/70 transition-colors hover:bg-white/10 hover:text-white disabled:pointer-events-none disabled:opacity-30"
+            >
+              <ChevronLeft className="size-4" /> Back
+            </button>
+
+            {last ? (
               <button
-                onClick={() => go(i - 1)}
-                aria-label="Previous step"
-                className="flex size-8 items-center justify-center rounded-lg border border-white/10 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+                onClick={() => setI(0)}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground transition-transform hover:-translate-y-0.5"
               >
-                <ChevronLeft className="size-4" />
+                <RotateCcw className="size-4" /> Replay walkthrough
               </button>
+            ) : (
               <button
                 onClick={() => go(i + 1)}
-                aria-label="Next step"
-                className="flex size-8 items-center justify-center rounded-lg border border-white/10 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground transition-transform hover:-translate-y-0.5"
               >
-                <ChevronRight className="size-4" />
+                Next <ChevronRight className="size-4" />
               </button>
-            </div>
+            )}
           </div>
         </div>
       </DialogContent>
