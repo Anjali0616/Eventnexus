@@ -3,15 +3,18 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { ChevronDown, LayoutDashboard, Menu, X } from "lucide-react"
+import { ChevronDown, LayoutDashboard, LogOut, Menu, UserRound, X } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
 import { useCurrentUser, useLogout, roleRoutes } from "@/lib/queries/auth"
+import type { User } from "@/lib/api/auth"
 
 type NavItem = { label: string; href: string }
 type NavGroup = { label: string; items: NavItem[] }
@@ -66,6 +69,79 @@ function NavDropdown({ group }: { group: NavGroup }) {
   )
 }
 
+const initialsOf = (name?: string) =>
+  (name || "")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() ?? "")
+    .join("")
+
+// The User schema has no avatar field today, but Google sign-in / a future
+// upload could add one — check the common keys so the picture shows the
+// moment it exists, otherwise fall back to initials then the generic icon.
+const avatarUrlOf = (user: User) => {
+  const u = user as unknown as Record<string, unknown>
+  const v = u.avatar ?? u.avatarUrl ?? u.photoUrl ?? u.image ?? u.picture
+  return typeof v === "string" && v ? v : null
+}
+
+/** Round avatar used as the account-menu trigger. */
+function Avatar({ user, className = "" }: { user: User; className?: string }) {
+  const url = avatarUrlOf(user)
+  const initials = initialsOf(user.name)
+  if (url) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={url} alt={user.name} className={`rounded-full object-cover ${className}`} />
+  }
+  return (
+    <span
+      className={`bg-brand-gradient flex items-center justify-center rounded-full font-display text-xs font-bold text-white ${className}`}
+    >
+      {initials || <UserRound className="size-4" />}
+    </span>
+  )
+}
+
+/** Logged-in account menu: Profile / Dashboard / Logout. */
+function AccountMenu({ user }: { user: User }) {
+  const logout = useLogout()
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label="Account menu"
+        className="rounded-full outline-none ring-offset-background transition-transform hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+      >
+        <Avatar user={user} className="size-9 border border-border" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel className="flex items-center gap-2">
+          <Avatar user={user} className="size-8" />
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-semibold text-ink">{user.name}</span>
+            <span className="block truncate text-xs font-normal text-muted-foreground">{user.email}</span>
+          </span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href="/settings" className="cursor-pointer">
+            <UserRound className="size-4" /> Profile
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href={roleHome[user.role] || "/dashboard"} className="cursor-pointer">
+            <LayoutDashboard className="size-4" /> Dashboard
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => logout()} className="cursor-pointer text-flame focus:text-flame">
+          <LogOut className="size-4" /> Logout
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export function Navbar() {
   const { data: userData } = useCurrentUser()
   const logout = useLogout()
@@ -102,20 +178,8 @@ export function Navbar() {
         {/* right side */}
         <div className="flex items-center gap-3">
           {user ? (
-            <>
-              <Link
-                href={roleHome[user.role] || "/dashboard"}
-                className="bg-brand-gradient hidden items-center gap-2 rounded-full px-5 py-2 text-sm font-semibold text-white shadow-[0_8px_24px_-8px_rgba(91,76,245,0.7)] transition-transform hover:-translate-y-0.5 sm:flex"
-              >
-                <LayoutDashboard className="size-4" /> Dashboard
-              </Link>
-              <button
-                onClick={logout}
-                className="hidden rounded-full border border-border px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-ink sm:block"
-              >
-                Logout
-              </button>
-            </>
+            /* logged in → account avatar + menu (Profile / Dashboard / Logout) */
+            <AccountMenu user={user} />
           ) : (
             <>
               <Link
@@ -129,6 +193,14 @@ export function Navbar() {
                 className="hidden rounded-full bg-flame px-5 py-2 text-sm font-semibold text-white shadow-[0_8px_24px_-8px_rgba(255,107,53,0.7)] transition-transform hover:-translate-y-0.5 sm:block"
               >
                 Create Account
+              </Link>
+              {/* profile icon for visitors → login */}
+              <Link
+                href="/login"
+                aria-label="Log in"
+                className="flex size-9 items-center justify-center rounded-full border border-border text-ink transition-colors hover:bg-muted"
+              >
+                <UserRound className="size-4" />
               </Link>
             </>
           )}
@@ -173,6 +245,16 @@ export function Navbar() {
             <div className="flex flex-col gap-2 border-t border-border pt-3">
               {user ? (
                 <>
+                  <div className="flex items-center gap-2.5 px-1 pb-1">
+                    <Avatar user={user} className="size-9" />
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold text-ink">{user.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{user.email}</span>
+                    </span>
+                  </div>
+                  <Link href="/settings" className="inline-flex items-center justify-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-muted">
+                    <UserRound className="size-4" /> Profile
+                  </Link>
                   <Link
                     href={roleHome[user.role] || "/dashboard"}
                     className="bg-brand-gradient inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-white"
@@ -181,9 +263,9 @@ export function Navbar() {
                   </Link>
                   <button
                     onClick={logout}
-                    className="rounded-full border border-border px-4 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
+                    className="inline-flex items-center justify-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm font-medium text-flame transition-colors hover:bg-muted"
                   >
-                    Logout
+                    <LogOut className="size-4" /> Logout
                   </button>
                 </>
               ) : (
