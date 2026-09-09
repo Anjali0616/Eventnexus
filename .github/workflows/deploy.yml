@@ -194,27 +194,47 @@ jobs:
             exit 1
           fi
 
-      # Base64-encode the env-file secrets so they cross into the SSH script as
-      # single-line, shell-safe blobs. (Interpolating multi-line secrets with
-      # quotes / $() / backticks straight into `script:` breaks the shell — that
-      # was the `stripe: command not found` failure.)
-      - name: Encode env-file secrets
+      # The .env secrets are multi-line and contain quotes, so they must NOT be
+      # interpolated into the SSH script: `${{ secrets.BACKEND_ENV }}` inline ends
+      # the shell string at the first `"` and the rest gets run as commands (that
+      # was `stripe: command not found`). Base64-on-one-line doesn't work either —
+      # a ~3KB line exceeds what drone-ssh can carry, and bash dies on the
+      # unterminated quote with no diagnostic. So: write them to files here and
+      # scp them over as files.
+      - name: Materialise env files
         env:
           BACKEND_ENV: ${{ secrets.BACKEND_ENV }}
           AI_ENV: ${{ secrets.AI_ENV }}
           FRONTEND_ENV: ${{ secrets.FRONTEND_ENV }}
         run: |
-          {
-            echo "DEPLOY_BACKEND_ENV_B64=$(printf '%s' "$BACKEND_ENV"  | base64 -w0)"
-            echo "DEPLOY_AI_ENV_B64=$(printf '%s' "$AI_ENV"            | base64 -w0)"
-            echo "DEPLOY_FRONTEND_ENV_B64=$(printf '%s' "$FRONTEND_ENV" | base64 -w0)"
-          } >> "$GITHUB_ENV"
+          mkdir -p deploy-env
+          # tr -d '\r': sources are CRLF; compose env_file would keep the \r in values.
+          printf '%s\n' "$BACKEND_ENV"  | tr -d '\r' > deploy-env/backend.env
+          printf '%s\n' "$AI_ENV"       | tr -d '\r' > deploy-env/ai.env
+          printf '%s\n' "$FRONTEND_ENV" | tr -d '\r' > deploy-env/frontend.env
+          # Drop blanks so an unset secret leaves the host's existing file alone.
+          for f in backend ai frontend; do
+            if [ -z "$(tr -d '[:space:]' < "deploy-env/$f.env")" ]; then
+              rm -f "deploy-env/$f.env"
+              echo "note: $f env secret is empty — the copy on EC2 will be kept"
+            fi
+          done
+          echo "files to ship:"; ls -l deploy-env
 
-      # NOTE: everything below is interpolated with ${{ }} into the script, which
-      # is safe *because* the only multi-line/quote-bearing values (the .env
-      # files) arrive base64-encoded. Do not add a raw multi-line secret here.
-      # appleboy's `envs:` is deliberately not used — it does not reliably
-      # deliver the vars, and `set -u` then aborts the script with no output.
+      - name: Upload env files to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT != '' && secrets.EC2_SSH_PORT || 22 }}
+          source: "deploy-env/*"
+          target: "~/eventnexus-env"
+          strip_components: 1
+          overwrite: true
+
+      # Everything interpolated into the script below is a short, single-line,
+      # quote-free scalar. Never add a multi-line secret here — see above.
       - name: Deploy to EC2 via SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -229,9 +249,6 @@ jobs:
             echo "== EventNexus deploy: $(date -u +%Y-%m-%dT%H:%M:%SZ) =="
             echo "== Host: $(hostname) | Docker: $(docker --version) | Compose: $(docker compose version) =="
 
-            DEPLOY_BACKEND_ENV_B64='${{ env.DEPLOY_BACKEND_ENV_B64 }}'
-            DEPLOY_AI_ENV_B64='${{ env.DEPLOY_AI_ENV_B64 }}'
-            DEPLOY_FRONTEND_ENV_B64='${{ env.DEPLOY_FRONTEND_ENV_B64 }}'
             DEPLOY_IMAGE_PREFIX='${{ env.IMAGE_PREFIX }}'
             DEPLOY_GHCR_USER='${{ github.actor }}'
             DEPLOY_GHCR_TOKEN='${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}'
@@ -261,26 +278,23 @@ jobs:
             cd "$DEPLOY_DIR"
 
             # ------------------------------------------------------------------
-            # 1) Write env files from the base64 secrets (empty = keep host copy)
+            # 1) Move in the env files uploaded by the scp step. Absent = the
+            #    secret was empty, so keep whatever is already on the host.
+            #    ~/eventnexus-env sits outside $DEPLOY_DIR so the first-deploy
+            #    `rm -rf "$DEPLOY_DIR"` above cannot wipe it.
             # ------------------------------------------------------------------
-            write_env_b64() {
-              b64="$1"; dest="$2"
-              if [ -n "$b64" ]; then
-                # tr -d '\r': the source .env files are CRLF; compose env_file
-                # would otherwise carry a trailing \r into every value.
-                printf '%s' "$b64" | base64 -d | tr -d '\r' > "$dest"
-                [ -s "$dest" ] && [ "$(tail -c1 "$dest")" != "" ] && printf '\n' >> "$dest" || true
-                chmod 600 "$dest"
+            for f in backend ai frontend; do
+              src="$HOME/eventnexus-env/$f.env"
+              dest="$DEPLOY_DIR/$f.env"
+              if [ -s "$src" ]; then
+                install -m 600 "$src" "$dest"
                 echo ">> Wrote $dest ($(wc -l < "$dest") lines)"
               elif [ -f "$dest" ]; then
                 echo ">> Keep existing $dest (secret not set)"
               else
                 echo "::warning:: $dest missing and secret not set — service may fail to start"
               fi
-            }
-            write_env_b64 "${DEPLOY_BACKEND_ENV_B64:-}"  "$DEPLOY_DIR/backend.env"
-            write_env_b64 "${DEPLOY_AI_ENV_B64:-}"       "$DEPLOY_DIR/ai.env"
-            write_env_b64 "${DEPLOY_FRONTEND_ENV_B64:-}" "$DEPLOY_DIR/frontend.env"
+            done
 
             # ------------------------------------------------------------------
             # 2) Authenticate to GHCR on EC2 (needed only for private images)
