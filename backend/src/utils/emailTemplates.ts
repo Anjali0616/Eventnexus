@@ -1,10 +1,30 @@
 import fs from "fs";
 import path from "path";
 
-// Resolve templates directory relative to this file
-// Handle both normal require and node -e (where __dirname is .)
-const BASE_DIR: string = process.cwd();
-const TEMPLATES_DIR: string = path.resolve(BASE_DIR, "src", "templates", "emails");
+// The email templates are plain .html — tsc never emits them, so where they
+// land depends on how the app is run:
+//   • dev (tsx, cwd = backend/)     → backend/src/templates/emails
+//   • prod (node dist/server.js)    → <cwd>/src/templates/emails, shipped by
+//                                     the Dockerfile alongside dist/
+//   • some builds copy assets into  → dist/templates/emails
+// Resolve against every plausible location and use the first that exists so a
+// build/layout change can't silently disable templated email again.
+const CANDIDATE_DIRS: string[] = [
+  path.resolve(process.cwd(), "src", "templates", "emails"),
+  path.resolve(process.cwd(), "dist", "templates", "emails"),
+  path.resolve(__dirname, "..", "templates", "emails"),
+  path.resolve(__dirname, "..", "..", "src", "templates", "emails"),
+  path.resolve(__dirname, "..", "..", "templates", "emails"),
+];
+
+const TEMPLATES_DIR: string =
+  CANDIDATE_DIRS.find((dir) => {
+    try {
+      return fs.existsSync(dir) && fs.statSync(dir).isDirectory();
+    } catch {
+      return false;
+    }
+  }) ?? CANDIDATE_DIRS[0];
 
 const templateCache = new Map<string, string>();
 

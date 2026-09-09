@@ -56,6 +56,12 @@ COPY --from=prod-deps /app/package.json ./package.json
 # Copy compiled dist (no src, no dev files, no .env — injected at runtime)
 COPY --from=builder /app/dist ./dist
 
+# Email templates are plain .html and are NOT emitted by tsc, so they must be
+# shipped explicitly — utils/emailTemplates.ts resolves them from
+# <cwd>/src/templates/emails (cwd is /app here). Without this, every templated
+# email (verify-email, password-reset, …) silently falls back to link-less text.
+COPY --from=builder /app/src/templates ./src/templates
+
 # Security: non-root, read-only friendly
 USER appuser
 EXPOSE 5000

@@ -92,9 +92,27 @@ export const sendMail = async ({ to, subject, template, templateData, text, html
       finalText = templateResult.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
     } catch (err: any) {
       console.warn(`[email] Template "${template}" not found or failed to render, falling back to text:`, err.message);
-      // If template fails, we'll use provided text or generate basic text
+      // If the template can't render, still deliver something usable — most
+      // importantly any action link/token the caller passed (reset/verify),
+      // so a template regression never produces a link-less email.
       if (!text) {
-        finalText = `EventNexus notification: ${subject}`;
+        const actionUrl = templateData?.link || templateData?.url || templateData?.actionUrl;
+        finalText = actionUrl
+          ? `${subject}\n\nOpen this link to continue:\n${actionUrl}\n\nThis link expires in 24 hours. If you didn't request this, ignore this email.`
+          : `EventNexus notification: ${subject}`;
+      }
+      if (!finalHtml) {
+        const actionUrl = templateData?.link || templateData?.url || templateData?.actionUrl;
+        if (actionUrl) {
+          finalHtml = `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#1f2937">
+  <h2 style="margin:0 0 12px">${subject}</h2>
+  <p style="margin:0 0 20px;color:#4b5563">Click the button below to continue.</p>
+  <p style="margin:0 0 20px"><a href="${actionUrl}" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:600">Continue</a></p>
+  <p style="margin:0 0 4px;color:#6b7280;font-size:13px">Or paste this link into your browser:</p>
+  <p style="margin:0;color:#6366f1;font-size:13px;word-break:break-all">${actionUrl}</p>
+  <p style="margin:20px 0 0;color:#6b7280;font-size:13px">This link expires in 24 hours. If you didn't request this, you can ignore this email.</p>
+</div>`;
+        }
       }
     }
   }
