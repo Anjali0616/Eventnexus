@@ -25,9 +25,9 @@ const columns: { title: string; links: FooterLink[] }[] = [
     title: "Organizations",
     links: [
       { label: "Register Organization", href: "/org-register" },
-      { label: "Organizer Guide", href: "/organizer" },
-      { label: "Create an Event", href: "/organizer/events/create" },
-      { label: "Collaboration", href: "/organizer/collaboration" },
+      { label: "Organizer Guide", href: "/organizer-guide" },
+      { label: "Create an Event", href: "/create-event" },
+      { label: "Collaboration", href: "/collaboration" },
     ],
   },
   {

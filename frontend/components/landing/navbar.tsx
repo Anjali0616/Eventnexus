@@ -29,8 +29,8 @@ const groups: NavGroup[] = [
     label: "Organizations",
     items: [
       { label: "Register Organization", href: "/org-register" },
-      { label: "Create Event", href: "/organizer/events/create" },
-      { label: "Collaboration", href: "/organizer/collaboration" },
+      { label: "Create Event", href: "/create-event" },
+      { label: "Collaboration", href: "/collaboration" },
     ],
   },
 ]
