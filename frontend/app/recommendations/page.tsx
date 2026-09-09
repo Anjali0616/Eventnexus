@@ -214,6 +214,9 @@ export default function AttendeeRecommendationsPage() {
   const [category, setCategory] = useState("all")
   const [search, setSearch] = useState("")
   const [page, setPage] = useState(1)
+  // Which card is mid-registration. Mirrors the Discover page's joiningId — the
+  // mutation object is shared by every card, so its isPending can't identify one.
+  const [joiningId, setJoiningId] = useState<string | null>(null)
   const debouncedSearch = useDebounce(search, 350)
   const { data, isLoading, isError, refetch } = useRecommendations({
     category: category === "all" ? undefined : category,
@@ -240,7 +243,7 @@ export default function AttendeeRecommendationsPage() {
   const predictedTotal = recommendations.reduce((sum, r) => sum + (r.event.predictedAttendance ?? 0), 0)
 
   const handleRegister = (eventId: string) => {
-    if (registeredEventIds.has(eventId) || registerMutation.isPending) return
+    if (registeredEventIds.has(eventId) || joiningId) return
     // Paid events must go through checkout (eSewa/Stripe) — the direct register
     // endpoint 400s with "requires payment". Redirect to detail for rail choice.
     const rec = recommendations.find((r) => r.event._id === eventId)
@@ -251,7 +254,12 @@ export default function AttendeeRecommendationsPage() {
     // Past / full events are disabled at the card level but guard here too
     if (rec && new Date(rec.event.date).getTime() <= Date.now()) return
     if (rec && rec.event.registered >= rec.event.capacity) return
-    registerMutation.mutate(eventId)
+    // Track the specific card: registerMutation.isPending is shared across every
+    // rendered card, so using it here put all of them into "Registering…" at once.
+    setJoiningId(eventId)
+    registerMutation.mutate(eventId, {
+      onSettled: () => setJoiningId(null),
+    })
   }
 
   return (
@@ -401,7 +409,7 @@ export default function AttendeeRecommendationsPage() {
                 rec={rec}
                 rank={i + 1}
                 isRegistered={registeredEventIds.has(rec.event._id)}
-                pending={registerMutation.isPending}
+                pending={joiningId === rec.event._id}
                 onRegister={() => handleRegister(rec.event._id)}
               />
             ))}
