@@ -18,6 +18,8 @@ export interface AppEvent {
   matchScore?: number;
   price: string;
   gradient: string;
+  /** Uploaded banner (base64 data URL) — same field the detail pages use. */
+  imageUrl?: string;
 }
 
 const GRADIENTS = [
@@ -56,5 +58,6 @@ export function toAppEvent(event: EventData): AppEvent {
     category: event.category,
     price: formatPrice(event.price),
     gradient: pickGradient(event._id),
+    imageUrl: event.imageUrl || undefined,
   };
 }

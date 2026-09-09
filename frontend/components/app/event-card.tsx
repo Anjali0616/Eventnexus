@@ -31,8 +31,19 @@ export function EventCard({
   return (
     <div className="group flex flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_2px_24px_rgba(0,0,0,0.04)] transition-all hover:-translate-y-1.5 hover:shadow-[0_24px_50px_-28px_rgba(26,26,46,0.45)]">
       <Link href={href ?? `/event/${event.id}`} className="block">
-        {/* Banner */}
-        <div className={`relative h-32 ${event.gradient}`}>
+        {/* Banner — uploaded event image (same `imageUrl` field the detail page
+            uses); falls back to the generated gradient when there's none. A
+            fixed height + object-cover keeps every card the same size. */}
+        <div className={`relative h-32 overflow-hidden ${event.imageUrl ? "bg-muted" : event.gradient}`}>
+          {event.imageUrl && (
+            // eslint-disable-next-line @next/next/no-img-element -- base64 data URLs; next/image can't optimize these
+            <img
+              src={event.imageUrl}
+              alt={event.title}
+              loading="lazy"
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+          )}
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_20%,rgba(255,255,255,0.35),transparent_55%)]" />
           <div className="absolute left-3 top-3 flex gap-2">
             <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusStyle[event.status]}`}>
