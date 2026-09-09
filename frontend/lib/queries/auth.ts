@@ -67,16 +67,48 @@ export function useLogin(redirectTo?: string | null) {
 }
 
 export function useRegister(redirectTo?: string | null) {
-  const onSuccess = useAuthSuccess(redirectTo);
+  const queryClient = useQueryClient();
+  const router = useRouter();
   return useMutation({
     mutationFn: (data: RegisterPayload) => authApi.register(data),
     onSuccess: (data: AuthResponse) => {
-      // org-admin pending flow returns message without token — do not store session
-      if ((data as unknown as { message?: string })?.message?.includes("pending") && !(data as unknown as { token?: string })?.token) {
+      const token = (data as unknown as { token?: string })?.token;
+      const message = (data as unknown as { message?: string })?.message;
+
+      // org-admin "pending tenant" flow returns a message and no token —
+      // nothing to store, they can't log in until an admin approves.
+      if (!token && message?.includes("pending")) {
         toast.success("Application submitted! Check your email for verification.");
         return;
       }
-      onSuccess(data);
+
+      // Persist the session if one was issued (needed so the holding screen's
+      // "resend verification email" button is authenticated).
+      if (token) {
+        storeSession(data);
+        localStorage.setItem("user", JSON.stringify(data.user));
+        queryClient.setQueryData(authKeys.me, { user: data.user });
+        resetChatbotForUserChange();
+      }
+
+      // A brand-new local account is unverified. Send them to the holding
+      // screen to check their inbox — NOT into the app. (AppShell would bounce
+      // them here anyway; doing it explicitly avoids the flash of the
+      // dashboard and the redirect race.) The QR/redirect target is preserved
+      // so they land on it after verifying.
+      const needsVerify = data.user && !data.user.googleAccount && !data.user.emailVerified;
+      if (needsVerify) {
+        toast.success("Account created — check your email to verify your address.");
+        router.replace(
+          redirectTo ? `/verify-email?redirect=${encodeURIComponent(redirectTo)}` : "/verify-email",
+        );
+        return;
+      }
+
+      // Already-verified (shouldn't happen for local sign-up, but keep the
+      // sane path): straight into the app.
+      toast.success(`Welcome, ${data.user.name}!`);
+      router.push(redirectTo || roleRoutes[data.user.role] || "/dashboard");
     },
     onError: (error: unknown) => toast.error(getErrorMessage(error, "Registration failed.")),
   });

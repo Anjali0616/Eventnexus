@@ -16,14 +16,18 @@ import { useCurrentUser, useLogout, useResendVerification, useVerifyEmail, roleR
 // straight to their dashboard — no need to log back in.
 function AwaitingVerification() {
   const router = useRouter()
+  const params = useSearchParams()
   const logout = useLogout()
   const { data: userData } = useCurrentUser()
   const resend = useResendVerification()
   const user = userData?.user
+  // Preserved from the register step (e.g. a QR /event/<id> deep link) so a
+  // freshly-verified user lands back where they started, not a generic home.
+  const redirect = params.get("redirect")
 
   useEffect(() => {
-    if (user?.emailVerified) router.replace(roleRoutes[user.role] || "/dashboard")
-  }, [user, router])
+    if (user?.emailVerified) router.replace(redirect || roleRoutes[user.role] || "/dashboard")
+  }, [user, router, redirect])
 
   return (
     <AuthShell heading="Verify your email" sub="Confirm your address to unlock your dashboard.">
