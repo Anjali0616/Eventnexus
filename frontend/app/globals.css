@@ -175,3 +175,9 @@ html.gsap-ready [data-reveal] {
   scrollbar-width: thin;
   scrollbar-color: #c8c5bd transparent;
 }
+
+/* Landing demo-flow: autoplay progress fill (see components/landing/demo-flow.tsx) */
+@keyframes demo-fill {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}

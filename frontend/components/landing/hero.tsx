@@ -2,10 +2,9 @@
 
 import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { 
-  ArrowRight, 
-  Play, 
-  Zap, 
+import {
+  ArrowRight,
+  Zap,
   Calendar, 
   Users, 
   TrendingUp, 
@@ -18,6 +17,7 @@ import {
   ChevronDown
 } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
+import { WatchDemoButton } from "@/components/landing/demo-flow"
 import { ensureGsapAsync, prefersReducedMotion } from "@/lib/gsap"
 import dynamic from "next/dynamic"
 const ContainerScroll = dynamic(() => import("@/components/ui/container-scroll-animation").then((m) => m.ContainerScroll), {
@@ -115,13 +115,7 @@ export function Hero() {
                   Start for Free
                   <ArrowRight className="size-4 transition-transform group-hover:translate-x-1" />
                 </Link>
-                <Link
-                  href="/dashboard"
-                  className="inline-flex items-center gap-2 rounded-full border border-border bg-card dark:bg-zinc-900 px-7 py-3.5 text-sm font-semibold text-ink dark:text-white transition-colors hover:bg-muted dark:hover:bg-zinc-800"
-                >
-                  <Play className="size-4 fill-current text-primary" />
-                  Watch Demo
-                </Link>
+                <WatchDemoButton />
               </div>
             </div>
           }
