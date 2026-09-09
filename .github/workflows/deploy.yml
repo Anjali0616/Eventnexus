@@ -245,7 +245,11 @@ jobs:
           script_stop: true
           command_timeout: 10m
           script: |
-            set -euo pipefail
+            # No `-u`: drone-ssh's shell does not reliably export HOME, and an
+            # unbound-variable abort here is invisible (it swallows stderr, so
+            # the job just shows "exit 1" after the banner). Explicit ${x:-}
+            # guards are used where a value may legitimately be absent.
+            set -eo pipefail
             echo "== EventNexus deploy: $(date -u +%Y-%m-%dT%H:%M:%SZ) =="
             echo "== Host: $(hostname) | Docker: $(docker --version) | Compose: $(docker compose version) =="
 
@@ -260,6 +264,9 @@ jobs:
             # 0) Ensure deploy directory & compose file present
             #    First deploy: repo is cloned shallowly. Subsequent: git pull.
             # ------------------------------------------------------------------
+            # Derive HOME rather than trusting it — see the `set -eo` note above.
+            HOME="${HOME:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
+            echo ">> user=$(id -un) home=$HOME"
             DEPLOY_DIR="$HOME/eventnexus"
             REPO_URL="https://github.com/${{ github.repository }}.git"
             BRANCH="${{ github.ref_name }}"
