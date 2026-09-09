@@ -1,21 +1,51 @@
 "use client"
 
 import Link from "next/link"
-import { LayoutDashboard } from "lucide-react"
+import { ChevronDown, LayoutDashboard } from "lucide-react"
 import { Logo } from "@/components/ui/logo"
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu"
 import { useCurrentUser, useLogout, roleRoutes } from "@/lib/queries/auth"
 
 const links = [
   { label: "Features", href: "#features" },
   { label: "How It Works", href: "#how" },
-  { label: "Admin", href: "/admin" },
+  { label: "Pricing", href: "#how" },
+  { label: "Demo", href: "/dashboard" },
+  { label: "Contact", href: "mailto:hello@eventnexus.app" },
+]
+
+// Portal entrypoints, grouped under one dropdown rather than three flat links.
+const portals = [
+  { label: "Attendee", href: "/dashboard" },
   { label: "Organizer", href: "/organizer" },
-  { label: "Dashboard", href: "/dashboard" },
+  { label: "Dashboard", href: "/admin" },
 ]
 
 // Shared role→home map rather than another local copy that can drift out
 // of sync as roles are added (this one predated "org_admin").
 const roleHome = roleRoutes
+
+function NavLink({ label, href }: { label: string; href: string }) {
+  const className =
+    "text-sm font-medium text-muted-foreground transition-colors hover:text-ink"
+  if (href.startsWith("mailto:")) {
+    return (
+      <a href={href} className={className}>
+        {label}
+      </a>
+    )
+  }
+  return (
+    <Link href={href} className={className}>
+      {label}
+    </Link>
+  )
+}
 
 export function Navbar() {
   const { data: userData } = useCurrentUser()
@@ -29,17 +59,29 @@ export function Navbar() {
           <Logo className="h-8" priority />
         </Link>
 
-        <ul className="hidden items-center gap-8 md:flex">
+        <ul className="hidden items-center gap-7 md:flex">
           {links.map((l) => (
             <li key={l.label}>
-              <Link
-                href={l.href}
-                className="text-sm font-medium text-muted-foreground transition-colors hover:text-ink"
-              >
-                {l.label}
-              </Link>
+              <NavLink label={l.label} href={l.href} />
             </li>
           ))}
+          <li>
+            <DropdownMenu>
+              <DropdownMenuTrigger className="inline-flex items-center gap-1 text-sm font-medium text-muted-foreground outline-none transition-colors hover:text-ink data-[state=open]:text-ink">
+                Portals
+                <ChevronDown className="size-3.5 transition-transform data-[state=open]:rotate-180" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                {portals.map((p) => (
+                  <DropdownMenuItem key={p.label} asChild>
+                    <Link href={p.href} className="cursor-pointer">
+                      {p.label}
+                    </Link>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </li>
         </ul>
 
         {user ? (
