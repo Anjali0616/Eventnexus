@@ -29,9 +29,10 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  # IMAGE_PREFIX = "<owner>/<repo-basename>" lowercased, e.g. ashokabbhattaraii/event
-  # GHCR requires lowercase
-  IMAGE_PREFIX: ${{ github.repository_owner }}/event
+  # IMAGE_PREFIX = "<owner>/<repo-basename>" — GHCR requires it lowercase, and
+  # GitHub Actions expressions have no lower() function, so hardcode it for this
+  # repo (github.repository_owner is "Anjali0616" → cache refs reject uppercase).
+  IMAGE_PREFIX: anjali0616/event
 
 concurrency:
   group: deploy-ec2-${{ github.ref }}

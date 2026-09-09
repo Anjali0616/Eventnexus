@@ -21,7 +21,7 @@
 
 services:
   caddy:
-    image: caddy:2.8-alpine
+    image: caddy:2-alpine
     container_name: eventnexus-caddy
     ports:
       - "80:80"
@@ -53,7 +53,7 @@ services:
         max-file: "3"
 
   backend:
-    image: ghcr.io/${IMAGE_PREFIX:-ashokabbhattaraii/event}-backend:${IMAGE_TAG:-latest}
+    image: ghcr.io/${IMAGE_PREFIX:-anjali0616/event}-backend:${IMAGE_TAG:-latest}
     container_name: eventnexus-backend
     ports:
       - "127.0.0.1:5000:5000"   # internal only — reached via caddy (backend:5000)
@@ -95,7 +95,7 @@ services:
         max-file: "3"
 
   frontend:
-    image: ghcr.io/${IMAGE_PREFIX:-ashokabbhattaraii/event}-frontend:${IMAGE_TAG:-latest}
+    image: ghcr.io/${IMAGE_PREFIX:-anjali0616/event}-frontend:${IMAGE_TAG:-latest}
     container_name: eventnexus-frontend
     ports:
       - "127.0.0.1:3000:3000"   # internal only — reached via caddy (frontend:3000)
@@ -125,7 +125,7 @@ services:
         max-file: "3"
 
   ai-service:
-    image: ghcr.io/${IMAGE_PREFIX:-ashokabbhattaraii/event}-ai-service:${IMAGE_TAG:-latest}
+    image: ghcr.io/${IMAGE_PREFIX:-anjali0616/event}-ai-service:${IMAGE_TAG:-latest}
     container_name: eventnexus-ai
     ports:
       - "127.0.0.1:8000:8000"  # not public; only backend should call it (via ai-service:8000 DNS)
