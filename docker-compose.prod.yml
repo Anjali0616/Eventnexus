@@ -5,26 +5,72 @@
 #   ~/eventnexus/frontend.env  (optional — frontend bakes NEXT_PUBLIC_* at build time)
 #   ~/eventnexus/ai.env
 #
+# Edge / TLS: the `caddy` service terminates HTTPS on :80/:443 and reverse-proxies
+# to frontend + backend (see infra/Caddyfile). App containers publish only on
+# 127.0.0.1 so nothing but Caddy is reachable from the internet.
+# Required env (exported by the deploy workflow): DOMAIN, ACME_EMAIL.
+#
 # Usage on EC2 (handled by .github/workflows/deploy.yml):
-#   docker compose -f docker-compose.prod.yml pull
-#   docker compose -f docker-compose.prod.yml up -d --remove-orphans
+#   DOMAIN=eventnexus.tech ACME_EMAIL=you@example.com \
+#     docker compose -f docker-compose.prod.yml pull
+#   DOMAIN=eventnexus.tech ACME_EMAIL=you@example.com \
+#     docker compose -f docker-compose.prod.yml up -d --remove-orphans
 #
 # Manual smoke test:
-#   curl http://localhost:5000/api/health && curl http://localhost:8000/health && curl -I http://localhost:3000/
+#   curl -fsS https://${DOMAIN}/api/health && curl -fsS https://${DOMAIN}/ -I
 
 services:
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: eventnexus-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      DOMAIN: ${DOMAIN:-eventnexus.tech}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@eventnexus.tech}
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data        # persisted certs + ACME account — do NOT lose this
+      - caddy-config:/config
+    depends_on:
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   backend:
     image: ghcr.io/${IMAGE_PREFIX:-ashokabbhattaraii/event}-backend:${IMAGE_TAG:-latest}
     container_name: eventnexus-backend
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"   # internal only — reached via caddy (backend:5000)
     env_file:
       - path: ./backend.env
         required: false
     environment:
-      # Override to use internal DNS; .env may still have localhost for local dev
+      # These win over anything in backend.env (compose `environment` > `env_file`,
+      # and the app's dotenv does not override real env vars) so production is
+      # correct even if the pasted BACKEND_ENV secret still carries dev values.
       AI_SERVICE_URL: http://ai-service:8000
       NODE_ENV: production
+      # CORS + socket.io origins, and the base for Stripe/eSewa redirects, email
+      # links and QR URLs (code takes .split(",")[0] where a single URL is needed).
+      # The deploy workflow exports FRONTEND_URL derived from DOMAIN; this literal
+      # is the fallback for a manual `docker compose up` on the host.
+      FRONTEND_URL: ${FRONTEND_URL:-https://eventnexus.tech,https://www.eventnexus.tech}
     depends_on:
       ai-service:
         condition: service_healthy
@@ -52,8 +98,7 @@ services:
     image: ghcr.io/${IMAGE_PREFIX:-ashokabbhattaraii/event}-frontend:${IMAGE_TAG:-latest}
     container_name: eventnexus-frontend
     ports:
-      # Host 80 -> container 3000 so http://<EC2_IP>/ works without :3000
-      - "80:3000"
+      - "127.0.0.1:3000:3000"   # internal only — reached via caddy (frontend:3000)
     # Frontend NEXT_PUBLIC_* are baked at build; runtime env not needed for Next standalone
     # but keep file for future runtime config if needed
     env_file:
@@ -112,6 +157,10 @@ services:
 volumes:
   ai-models:
     name: eventnexus-ai-models
+  caddy-data:
+    name: eventnexus-caddy-data
+  caddy-config:
+    name: eventnexus-caddy-config
 
 networks:
   default:

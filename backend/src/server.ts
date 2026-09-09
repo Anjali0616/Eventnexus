@@ -59,6 +59,10 @@ const allowedOrigins: string[] = (process.env.FRONTEND_URL || "http://localhost:
   .map((o: string) => o.trim())
   .filter(Boolean);
 const extraOrigins: string[] = [
+  // Production domain (HTTPS via Caddy) — kept here as a hard fallback so the
+  // API stays reachable even if FRONTEND_URL is misconfigured on the host.
+  "https://eventnexus.tech",
+  "https://www.eventnexus.tech",
   "http://3.106.232.125",
   "http://3.106.232.125:3000",
   "http://3.106.232.125:80",

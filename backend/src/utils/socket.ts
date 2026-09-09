@@ -24,10 +24,19 @@ let io: Server | null = null;
 export const initSocket = (server: HttpServer): Server => {
   if (io) return io;
 
-  const allowedSocketOrigins = (process.env.FRONTEND_URL || "http://localhost:3000")
-    .split(",")
-    .map((o: string) => o.trim())
-    .filter(Boolean);
+  const allowedSocketOrigins = [
+    ...new Set(
+      [
+        ...(process.env.FRONTEND_URL || "http://localhost:3000").split(","),
+        // Hard fallbacks so realtime survives a missing/incomplete FRONTEND_URL.
+        "https://eventnexus.tech",
+        "https://www.eventnexus.tech",
+        "http://localhost:3000",
+      ]
+        .map((o: string) => o.trim())
+        .filter(Boolean),
+    ),
+  ];
   io = new Server(server as any, {
     path: "/api/socket.io",
     cors: {

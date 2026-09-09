@@ -3,6 +3,12 @@
 > **Status:** Implemented and live in `ap-southeast-2` (VPC `vpc-01aac9aac4b81d187`, ALB `eventnexus-alb`, EC2 `i-04ca32808d1316bc8` `3.106.232.125`).  
 > Workflows: `.github/workflows/deploy.yml` (push `main` → build + deploy) + `.github/workflows/ci.yml` (PR/`dev` → build-only).  
 > This doc lists **every repo setting that must be set** for a green run.
+>
+> **HTTPS / custom domain (`https://eventnexus.tech`):** the edge is now a
+> `caddy` container (auto Let's Encrypt) in `docker-compose.prod.yml`, not the
+> ALB. For the domain-specific settings — `NEXT_PUBLIC_API_URL` must be
+> `https://eventnexus.tech/api`, plus `DOMAIN` / `ACME_EMAIL` and the SG
+> ports — see **`docs/HTTPS_DOMAIN_SETUP.md`** (authoritative for those).
 
 ## 1) What runs when
 
