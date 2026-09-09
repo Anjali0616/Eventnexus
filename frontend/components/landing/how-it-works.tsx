@@ -172,106 +172,38 @@ const visuals = [StepOneVisual, StepTwoVisual, StepThreeVisual]
 export function HowItWorks() {
   const [activeStep, setActiveStep] = useState(0)
   const sectionRef = useRef<HTMLElement>(null)
-  const boardShellRef = useRef<HTMLDivElement>(null)
   const visualContainerRef = useRef<HTMLDivElement>(null)
-  const activeStepRef = useRef(0)
 
+  // Gentle idle float on the mockup card. No ScrollTrigger / pinning — the
+  // earlier pinned-scroll version left the board stuck at opacity:0 and
+  // overlapping the section above whenever ScrollTrigger failed to refresh
+  // (lazy hero, chunk-split gsap). This section is now a plain tabbed panel.
   useEffect(() => {
+    if (prefersReducedMotion()) return
     const section = sectionRef.current
-    const boardShell = boardShellRef.current
-    if (!section || !boardShell) return
+    if (!section) return
 
     let ctx: any
     let cancelled = false
     void ensureGsapAsync().then((gsap) => {
       if (cancelled || !gsap) return
-      const ST = (gsap as any).ScrollTrigger ?? null
-      // Fallback to dynamic import if ScrollTrigger not on instance (chunk split)
-      const getST = ST
-        ? Promise.resolve(ST)
-        : import("gsap/ScrollTrigger").then((m) => (m as any).ScrollTrigger ?? (m as any).default)
-      void getST.then((ScrollTrigger: any) => {
-        if (cancelled) return
-        ctx = gsap.context(() => {
-          if (!prefersReducedMotion()) {
-            gsap.fromTo(
-              ".interactive-mockup",
-              { y: 5 },
-              {
-                y: -5,
-                duration: 2.5,
-                repeat: -1,
-                yoyo: true,
-                ease: "power1.inOut",
-              },
-            )
-
-            gsap.from(".how-header", {
-              scrollTrigger: {
-                trigger: section,
-                start: "top 80%",
-              },
-              opacity: 0,
-              y: 40,
-              duration: 0.8,
-              ease: "power2.out",
-            })
-
-            gsap.from(".interactive-board", {
-              scrollTrigger: {
-                trigger: boardShell,
-                start: "top 85%",
-              },
-              opacity: 0,
-              scale: 0.97,
-              y: 50,
-              duration: 1,
-              ease: "power3.out",
-            })
-          }
-
-          ScrollTrigger.create({
-            id: "how-it-works-pin",
-            trigger: boardShell,
-            start: "top top+=96",
-            end: () => `+=${window.innerHeight * Math.max(steps.length - 1, 1) * 0.72}`,
-            pin: true,
-            anticipatePin: 1,
-            scrub: 0.35,
-            invalidateOnRefresh: true,
-            snap:
-              steps.length > 1
-                ? {
-                    snapTo: 1 / (steps.length - 1),
-                    duration: { min: 0.2, max: 0.42 },
-                    delay: 0,
-                    directional: true,
-                    ease: "power2.out",
-                  }
-                : undefined,
-            onUpdate: (self: any) => {
-              const nextStep = Math.min(steps.length - 1, Math.round(self.progress * (steps.length - 1)))
-              if (nextStep !== activeStepRef.current) {
-                activeStepRef.current = nextStep
-                setActiveStep(nextStep)
-              }
-            },
-          })
-        }, section)
-      })
+      ctx = gsap.context(() => {
+        gsap.fromTo(
+          ".interactive-mockup",
+          { y: 5 },
+          { y: -5, duration: 2.5, repeat: -1, yoyo: true, ease: "power1.inOut" },
+        )
+      }, section)
     })
-
     return () => {
       cancelled = true
       ctx?.revert()
     }
   }, [])
 
+  // Cross-fade the visual when the active step changes.
   useEffect(() => {
-    activeStepRef.current = activeStep
-
     if (prefersReducedMotion()) return
-
     const visualContainer = visualContainerRef.current
     if (!visualContainer) return
 
@@ -297,19 +229,7 @@ export function HowItWorks() {
     }
   }, [activeStep])
 
-  const handleStepClick = (index: number) => {
-    activeStepRef.current = index
-    setActiveStep(index)
-
-    void import("gsap/ScrollTrigger").then((m) => {
-      const ST = (m as any).ScrollTrigger ?? (m as any).default ?? (m as any)
-      const trigger = ST.getById("how-it-works-pin")
-      if (!trigger) return
-      const progress = steps.length > 1 ? index / (steps.length - 1) : 0
-      const scrollTarget = trigger.start + (trigger.end - trigger.start) * progress
-      window.scrollTo({ top: scrollTarget + 1, behavior: "smooth" })
-    })
-  }
+  const handleStepClick = (index: number) => setActiveStep(index)
 
   const VisualComponent = visuals[activeStep]
 
@@ -344,8 +264,8 @@ export function HowItWorks() {
         </div>
 
         {/* Compact Side-by-Side Interactive Board */}
-        <div ref={boardShellRef} className="interactive-board-shell max-w-5xl mx-auto">
-          <div className="interactive-board grid items-center gap-12 lg:grid-cols-12 bg-white/[0.01]/10 rounded-3xl border border-white/5 p-6 lg:p-10 shadow-2xl backdrop-blur-sm">
+        <div className="interactive-board-shell max-w-5xl mx-auto">
+          <div className="interactive-board grid items-center gap-12 lg:grid-cols-12 bg-white/[0.02] rounded-3xl border border-white/5 p-6 lg:p-10 shadow-2xl backdrop-blur-sm">
           
           {/* Left Column: Interactive Progressive Tabs */}
           <div className="relative lg:col-span-6">
