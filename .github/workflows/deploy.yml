@@ -210,17 +210,13 @@ jobs:
             echo "DEPLOY_FRONTEND_ENV_B64=$(printf '%s' "$FRONTEND_ENV" | base64 -w0)"
           } >> "$GITHUB_ENV"
 
+      # NOTE: everything below is interpolated with ${{ }} into the script, which
+      # is safe *because* the only multi-line/quote-bearing values (the .env
+      # files) arrive base64-encoded. Do not add a raw multi-line secret here.
+      # appleboy's `envs:` is deliberately not used — it does not reliably
+      # deliver the vars, and `set -u` then aborts the script with no output.
       - name: Deploy to EC2 via SSH
         uses: appleboy/ssh-action@v1.2.0
-        env:
-          DEPLOY_REPO: ${{ github.repository }}
-          DEPLOY_BRANCH: ${{ github.ref_name }}
-          DEPLOY_IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
-          DEPLOY_GHCR_USER: ${{ github.actor }}
-          DEPLOY_GHCR_TOKEN: ${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
-          DEPLOY_DOMAIN: ${{ vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech' }}
-          DEPLOY_ACME_EMAIL: ${{ secrets.ACME_EMAIL != '' && secrets.ACME_EMAIL || format('admin@{0}', vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech') }}
-          DEPLOY_FRONTEND_URL: ${{ vars.FRONTEND_URL != '' && vars.FRONTEND_URL || format('https://{0},https://www.{0}', vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech') }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
@@ -228,19 +224,28 @@ jobs:
           port: ${{ secrets.EC2_SSH_PORT != '' && secrets.EC2_SSH_PORT || 22 }}
           script_stop: true
           command_timeout: 10m
-          envs: DEPLOY_REPO,DEPLOY_BRANCH,DEPLOY_IMAGE_PREFIX,DEPLOY_GHCR_USER,DEPLOY_GHCR_TOKEN,DEPLOY_DOMAIN,DEPLOY_ACME_EMAIL,DEPLOY_FRONTEND_URL,DEPLOY_BACKEND_ENV_B64,DEPLOY_AI_ENV_B64,DEPLOY_FRONTEND_ENV_B64
           script: |
             set -euo pipefail
             echo "== EventNexus deploy: $(date -u +%Y-%m-%dT%H:%M:%SZ) =="
             echo "== Host: $(hostname) | Docker: $(docker --version) | Compose: $(docker compose version) =="
+
+            DEPLOY_BACKEND_ENV_B64='${{ env.DEPLOY_BACKEND_ENV_B64 }}'
+            DEPLOY_AI_ENV_B64='${{ env.DEPLOY_AI_ENV_B64 }}'
+            DEPLOY_FRONTEND_ENV_B64='${{ env.DEPLOY_FRONTEND_ENV_B64 }}'
+            DEPLOY_IMAGE_PREFIX='${{ env.IMAGE_PREFIX }}'
+            DEPLOY_GHCR_USER='${{ github.actor }}'
+            DEPLOY_GHCR_TOKEN='${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}'
+            DEPLOY_DOMAIN='${{ vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech' }}'
+            DEPLOY_ACME_EMAIL='${{ secrets.ACME_EMAIL != '' && secrets.ACME_EMAIL || format('admin@{0}', vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech') }}'
+            DEPLOY_FRONTEND_URL='${{ vars.FRONTEND_URL != '' && vars.FRONTEND_URL || format('https://{0},https://www.{0}', vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech') }}'
 
             # ------------------------------------------------------------------
             # 0) Ensure deploy directory & compose file present
             #    First deploy: repo is cloned shallowly. Subsequent: git pull.
             # ------------------------------------------------------------------
             DEPLOY_DIR="$HOME/eventnexus"
-            REPO_URL="https://github.com/${DEPLOY_REPO}.git"
-            BRANCH="${DEPLOY_BRANCH}"
+            REPO_URL="https://github.com/${{ github.repository }}.git"
+            BRANCH="${{ github.ref_name }}"
 
             if [ ! -d "$DEPLOY_DIR/.git" ]; then
               echo ">> First deploy — cloning $REPO_URL ($BRANCH) into $DEPLOY_DIR"
