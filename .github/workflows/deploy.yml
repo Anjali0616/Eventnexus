@@ -194,8 +194,33 @@ jobs:
             exit 1
           fi
 
+      # Base64-encode the env-file secrets so they cross into the SSH script as
+      # single-line, shell-safe blobs. (Interpolating multi-line secrets with
+      # quotes / $() / backticks straight into `script:` breaks the shell — that
+      # was the `stripe: command not found` failure.)
+      - name: Encode env-file secrets
+        env:
+          BACKEND_ENV: ${{ secrets.BACKEND_ENV }}
+          AI_ENV: ${{ secrets.AI_ENV }}
+          FRONTEND_ENV: ${{ secrets.FRONTEND_ENV }}
+        run: |
+          {
+            echo "DEPLOY_BACKEND_ENV_B64=$(printf '%s' "$BACKEND_ENV"  | base64 -w0)"
+            echo "DEPLOY_AI_ENV_B64=$(printf '%s' "$AI_ENV"            | base64 -w0)"
+            echo "DEPLOY_FRONTEND_ENV_B64=$(printf '%s' "$FRONTEND_ENV" | base64 -w0)"
+          } >> "$GITHUB_ENV"
+
       - name: Deploy to EC2 via SSH
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_REPO: ${{ github.repository }}
+          DEPLOY_BRANCH: ${{ github.ref_name }}
+          DEPLOY_IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
+          DEPLOY_GHCR_USER: ${{ github.actor }}
+          DEPLOY_GHCR_TOKEN: ${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
+          DEPLOY_DOMAIN: ${{ vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech' }}
+          DEPLOY_ACME_EMAIL: ${{ secrets.ACME_EMAIL != '' && secrets.ACME_EMAIL || format('admin@{0}', vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech') }}
+          DEPLOY_FRONTEND_URL: ${{ vars.FRONTEND_URL != '' && vars.FRONTEND_URL || format('https://{0},https://www.{0}', vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech') }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
@@ -203,6 +228,7 @@ jobs:
           port: ${{ secrets.EC2_SSH_PORT != '' && secrets.EC2_SSH_PORT || 22 }}
           script_stop: true
           command_timeout: 10m
+          envs: DEPLOY_REPO,DEPLOY_BRANCH,DEPLOY_IMAGE_PREFIX,DEPLOY_GHCR_USER,DEPLOY_GHCR_TOKEN,DEPLOY_DOMAIN,DEPLOY_ACME_EMAIL,DEPLOY_FRONTEND_URL,DEPLOY_BACKEND_ENV_B64,DEPLOY_AI_ENV_B64,DEPLOY_FRONTEND_ENV_B64
           script: |
             set -euo pipefail
             echo "== EventNexus deploy: $(date -u +%Y-%m-%dT%H:%M:%SZ) =="
@@ -213,8 +239,8 @@ jobs:
             #    First deploy: repo is cloned shallowly. Subsequent: git pull.
             # ------------------------------------------------------------------
             DEPLOY_DIR="$HOME/eventnexus"
-            REPO_URL="https://github.com/${{ github.repository }}.git"
-            BRANCH="${{ github.ref_name }}"
+            REPO_URL="https://github.com/${DEPLOY_REPO}.git"
+            BRANCH="${DEPLOY_BRANCH}"
 
             if [ ! -d "$DEPLOY_DIR/.git" ]; then
               echo ">> First deploy — cloning $REPO_URL ($BRANCH) into $DEPLOY_DIR"
@@ -230,66 +256,44 @@ jobs:
             cd "$DEPLOY_DIR"
 
             # ------------------------------------------------------------------
-            # 1) Write env files from GitHub Secrets (if provided)
-            #    Secrets are expected to contain FULL file contents, not single vars.
-            #    Fallback: keep existing files on host (do not overwrite with empty).
+            # 1) Write env files from the base64 secrets (empty = keep host copy)
             # ------------------------------------------------------------------
-            # Helper: write secret to file only if secret is non-empty
-            write_env() {
-              local secret_val="$1"
-              local dest="$2"
-              if [ -n "$secret_val" ]; then
-                printf "%s" "$secret_val" > "$dest"
-                # Ensure file ends with newline (compose env_file parsing)
-                tail -c1 "$dest" | read -r _ || echo >> "$dest"
+            write_env_b64() {
+              b64="$1"; dest="$2"
+              if [ -n "$b64" ]; then
+                # tr -d '\r': the source .env files are CRLF; compose env_file
+                # would otherwise carry a trailing \r into every value.
+                printf '%s' "$b64" | base64 -d | tr -d '\r' > "$dest"
+                [ -s "$dest" ] && [ "$(tail -c1 "$dest")" != "" ] && printf '\n' >> "$dest" || true
                 chmod 600 "$dest"
                 echo ">> Wrote $dest ($(wc -l < "$dest") lines)"
+              elif [ -f "$dest" ]; then
+                echo ">> Keep existing $dest (secret not set)"
               else
-                if [ -f "$dest" ]; then
-                  echo ">> Keep existing $dest (secret not set)"
-                else
-                  echo "::warning:: $dest missing and secret not set — service may fail to start"
-                fi
+                echo "::warning:: $dest missing and secret not set — service may fail to start"
               fi
             }
-
-            # NOTE: set these three Repository Secrets to the FULL .env contents
-            #   BACKEND_ENV  -> backend/.env  (MONGODB_URI, JWT_SECRET, etc.)
-            #   AI_ENV       -> ai-service/.env
-            #   FRONTEND_ENV -> frontend env (optional, for future runtime use)
-            # Alternatively set no secrets and pre-create files manually on EC2 — deploy keeps them.
-            write_env "${{ secrets.BACKEND_ENV }}" "$DEPLOY_DIR/backend.env"
-            write_env "${{ secrets.AI_ENV }}"      "$DEPLOY_DIR/ai.env"
-            write_env "${{ secrets.FRONTEND_ENV }}" "$DEPLOY_DIR/frontend.env"
+            write_env_b64 "${DEPLOY_BACKEND_ENV_B64:-}"  "$DEPLOY_DIR/backend.env"
+            write_env_b64 "${DEPLOY_AI_ENV_B64:-}"       "$DEPLOY_DIR/ai.env"
+            write_env_b64 "${DEPLOY_FRONTEND_ENV_B64:-}" "$DEPLOY_DIR/frontend.env"
 
             # ------------------------------------------------------------------
-            # 2) Authenticate to GHCR on EC2 (for private images)
-            #    Uses GITHUB_TOKEN actor; for private repos create a PAT with
-            #    read:packages and store as GHCR_PAT, else anonymous may fail.
+            # 2) Authenticate to GHCR on EC2 (needed only for private images)
             # ------------------------------------------------------------------
-            GHCR_USER="${{ github.actor }}"
-            GHCR_TOKEN="${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}"
-            if [ -n "$GHCR_TOKEN" ]; then
-              echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            if [ -n "${DEPLOY_GHCR_TOKEN:-}" ]; then
+              printf '%s' "$DEPLOY_GHCR_TOKEN" | docker login ghcr.io -u "$DEPLOY_GHCR_USER" --password-stdin
             fi
 
             # ------------------------------------------------------------------
             # 3) Pull & rolling update (zero-downtime)
             # ------------------------------------------------------------------
-            # GHCR image refs MUST be lowercase; github.repository_owner may not be.
-            export IMAGE_PREFIX="$(echo "${{ env.IMAGE_PREFIX }}" | tr '[:upper:]' '[:lower:]')"
+            export IMAGE_PREFIX="$(printf '%s' "$DEPLOY_IMAGE_PREFIX" | tr '[:upper:]' '[:lower:]')"
             export IMAGE_TAG="latest"
-            # If workflow was triggered by tag/SHA, you may want sha pinning:
-            # export IMAGE_TAG="${{ github.sha }}"
-            # For now we track :latest (mutable) + :<short-sha> (immutable)
 
-            # Edge/TLS config consumed by docker-compose.prod.yml → infra/Caddyfile.
-            export DOMAIN="${{ vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech' }}"
-            export ACME_EMAIL="${{ secrets.ACME_EMAIL != '' && secrets.ACME_EMAIL || format('admin@{0}', vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech') }}"
-            # Force the production frontend origin into the backend container
-            # (compose `environment` overrides whatever the BACKEND_ENV secret carries).
-            # Override via repo variable FRONTEND_URL only if you need extra origins.
-            export FRONTEND_URL="${{ vars.FRONTEND_URL != '' && vars.FRONTEND_URL || format('https://{0},https://www.{0}', vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech') }}"
+            # Edge/TLS + forced prod origin, consumed by docker-compose.prod.yml.
+            export DOMAIN="$DEPLOY_DOMAIN"
+            export ACME_EMAIL="$DEPLOY_ACME_EMAIL"
+            export FRONTEND_URL="$DEPLOY_FRONTEND_URL"
             echo ">> Edge: DOMAIN=$DOMAIN  ACME_EMAIL=$ACME_EMAIL"
             echo ">> Backend FRONTEND_URL=$FRONTEND_URL"
 
