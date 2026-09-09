@@ -1,0 +1,53 @@
+# EventNexus — edge reverse proxy with automatic HTTPS (Let's Encrypt).
+#
+# Runs as the `caddy` service in docker-compose.prod.yml. Caddy listens on
+# host :80 and :443, obtains + renews certificates for the domain on its own,
+# and proxies to the frontend / backend containers over the compose network.
+#
+# Env (from docker-compose.prod.yml → deploy workflow):
+#   DOMAIN       apex domain, e.g. eventnexus.tech
+#   ACME_EMAIL   contact address for the Let's Encrypt account
+#
+# Requirements: DNS A record for {$DOMAIN} and www.{$DOMAIN} → EC2 public IP,
+# and security-group ingress open on TCP 80 + 443.
+#
+# NOTE: auto_https redirects are DISABLED for now because the EC2 security
+# group only allows :80 — a forced :80→:443 redirect would break the site
+# until :443 is opened. Caddy still obtains the cert (ACME HTTP-01 over :80)
+# and serves HTTPS on :443 for anyone who can reach it. Once the SG allows
+# :443, drop `disable_redirects` to force HTTPS.
+
+{
+	email {$ACME_EMAIL}
+	auto_https disable_redirects
+	# Uncomment to test against Let's Encrypt staging (higher rate limits):
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+# www → apex, preserving the scheme the visitor used (so this keeps working
+# while only :80 is reachable).
+www.{$DOMAIN} {
+	redir {scheme}://{$DOMAIN}{uri} permanent
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# API + websockets (socket.io is served under /api/socket.io) → backend.
+	@api path /api/*
+	reverse_proxy @api backend:5000
+
+	# Everything else → Next.js standalone server.
+	reverse_proxy frontend:3000
+
+	header {
+		# Honoured only over HTTPS by browsers; harmless when sent on HTTP.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
