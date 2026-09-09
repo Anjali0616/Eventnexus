@@ -233,8 +233,10 @@ jobs:
           strip_components: 1
           overwrite: true
 
-      # Everything interpolated into the script below is a short, single-line,
-      # quote-free scalar. Never add a multi-line secret here — see above.
+      # Keep this payload trivial: drone-ssh mangles multi-line shell constructs
+      # and discards stderr, so anything more elaborate fails as a bare "exit 1"
+      # with no diagnostic. All real logic lives in infra/deploy-remote.sh, which
+      # runs as an ordinary script on the host.
       - name: Deploy to EC2 via SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -243,158 +245,27 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           port: ${{ secrets.EC2_SSH_PORT != '' && secrets.EC2_SSH_PORT || 22 }}
           script_stop: true
-          command_timeout: 10m
+          command_timeout: 15m
           script: |
-            # No `-u`: drone-ssh's shell does not reliably export HOME, and an
-            # unbound-variable abort here is invisible (it swallows stderr, so
-            # the job just shows "exit 1" after the banner). Explicit ${x:-}
-            # guards are used where a value may legitimately be absent.
-            set -eo pipefail
-            echo "== EventNexus deploy: $(date -u +%Y-%m-%dT%H:%M:%SZ) =="
-            echo "== Host: $(hostname) | Docker: $(docker --version) | Compose: $(docker compose version) =="
-
-            DEPLOY_IMAGE_PREFIX='${{ env.IMAGE_PREFIX }}'
-            DEPLOY_GHCR_USER='${{ github.actor }}'
-            DEPLOY_GHCR_TOKEN='${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}'
-            DEPLOY_DOMAIN='${{ vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech' }}'
-            DEPLOY_ACME_EMAIL='${{ secrets.ACME_EMAIL != '' && secrets.ACME_EMAIL || format('admin@{0}', vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech') }}'
-            DEPLOY_FRONTEND_URL='${{ vars.FRONTEND_URL != '' && vars.FRONTEND_URL || format('https://{0},https://www.{0}', vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech') }}'
-
-            # ------------------------------------------------------------------
-            # 0) Ensure deploy directory & compose file present
-            #    First deploy: repo is cloned shallowly. Subsequent: git pull.
-            # ------------------------------------------------------------------
-            # Derive HOME rather than trusting it — see the `set -eo` note above.
-            HOME="${HOME:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
+            set -e
+            export HOME="${HOME:-/home/$(id -un)}"
+            export DEPLOY_DIR="$HOME/eventnexus"
+            export ENV_DIR="$HOME/eventnexus-env"
             echo ">> user=$(id -un) home=$HOME"
-            DEPLOY_DIR="$HOME/eventnexus"
-            REPO_URL="https://github.com/${{ github.repository }}.git"
-            BRANCH="${{ github.ref_name }}"
-
-            if [ ! -d "$DEPLOY_DIR/.git" ]; then
-              echo ">> First deploy — cloning $REPO_URL ($BRANCH) into $DEPLOY_DIR"
-              rm -rf "$DEPLOY_DIR"
-              git clone --branch "$BRANCH" --depth 1 "$REPO_URL" "$DEPLOY_DIR"
-            else
-              echo ">> Updating existing checkout"
-              cd "$DEPLOY_DIR"
-              git fetch origin "$BRANCH" --depth 1
-              git reset --hard "origin/$BRANCH"
-              cd -
-            fi
+            test -d "$DEPLOY_DIR/.git" || rm -rf "$DEPLOY_DIR"
+            test -d "$DEPLOY_DIR/.git" || git clone --branch '${{ github.ref_name }}' --depth 1 'https://github.com/${{ github.repository }}.git' "$DEPLOY_DIR"
             cd "$DEPLOY_DIR"
-
-            # ------------------------------------------------------------------
-            # 1) Move in the env files uploaded by the scp step. Absent = the
-            #    secret was empty, so keep whatever is already on the host.
-            #    ~/eventnexus-env sits outside $DEPLOY_DIR so the first-deploy
-            #    `rm -rf "$DEPLOY_DIR"` above cannot wipe it.
-            # ------------------------------------------------------------------
-            for f in backend ai frontend; do
-              src="$HOME/eventnexus-env/$f.env"
-              dest="$DEPLOY_DIR/$f.env"
-              if [ -s "$src" ]; then
-                install -m 600 "$src" "$dest"
-                echo ">> Wrote $dest ($(wc -l < "$dest") lines)"
-              elif [ -f "$dest" ]; then
-                echo ">> Keep existing $dest (secret not set)"
-              else
-                echo "::warning:: $dest missing and secret not set — service may fail to start"
-              fi
-            done
-
-            # ------------------------------------------------------------------
-            # 2) Authenticate to GHCR on EC2 (needed only for private images)
-            # ------------------------------------------------------------------
-            # Non-fatal: this repo is public, so ghcr.io/anjali0616/event-* pull
-            # anonymously. GITHUB_TOKEN is scoped to the Actions run and is often
-            # rejected by GHCR from outside it ("denied: denied") — that must not
-            # abort the deploy. Set GHCR_PAT (read:packages) only if the packages
-            # are ever made private.
-            if [ -n "${DEPLOY_GHCR_TOKEN:-}" ]; then
-              printf '%s' "$DEPLOY_GHCR_TOKEN" \
-                | docker login ghcr.io -u "$DEPLOY_GHCR_USER" --password-stdin \
-                || echo ">> GHCR login failed — continuing with anonymous pull (packages are public)"
-            fi
-
-            # ------------------------------------------------------------------
-            # 3) Pull & rolling update (zero-downtime)
-            # ------------------------------------------------------------------
-            export IMAGE_PREFIX="$(printf '%s' "$DEPLOY_IMAGE_PREFIX" | tr '[:upper:]' '[:lower:]')"
-            export IMAGE_TAG="latest"
-
-            # Edge/TLS + forced prod origin, consumed by docker-compose.prod.yml.
-            export DOMAIN="$DEPLOY_DOMAIN"
-            export ACME_EMAIL="$DEPLOY_ACME_EMAIL"
-            export FRONTEND_URL="$DEPLOY_FRONTEND_URL"
-            echo ">> Edge: DOMAIN=$DOMAIN  ACME_EMAIL=$ACME_EMAIL"
-            echo ">> Backend FRONTEND_URL=$FRONTEND_URL"
-
-            echo ">> Pulling images: $IMAGE_PREFIX-*:latest"
-            docker compose -f docker-compose.prod.yml pull
-
-            echo ">> Starting services (recreate only changed)"
-            docker compose -f docker-compose.prod.yml up -d --remove-orphans
-
-            echo ">> Waiting for healthchecks (max 90s)"
-            # Wait for backend + ai + frontend + caddy to be healthy
-            for svc in ai-service backend frontend caddy; do
-              echo "   - $svc ..."
-              for i in $(seq 1 30); do
-                status=$(docker inspect --format='{{.State.Health.Status}}' "eventnexus-$svc" 2>/dev/null || echo "nohealth")
-                # Fallback: check running
-                if [ "$status" = "healthy" ]; then echo "     ✓ $svc healthy"; break; fi
-                if [ "$status" = "nohealth" ]; then
-                  # No healthcheck defined — check running state
-                  if docker ps --filter "name=eventnexus-$svc" --filter "status=running" | grep -q eventnexus; then
-                    echo "     ✓ $svc running (no healthcheck)"; break;
-                  fi
-                fi
-                sleep 3
-                if [ $i -eq 30 ]; then echo "     ! $svc not healthy after 90s (continuing)"; fi
-              done
-            done
-
-            echo ">> Current status"
-            docker compose -f docker-compose.prod.yml ps -a
-            echo ">> Recent logs (tail 50)"
-            docker compose -f docker-compose.prod.yml logs --tail 50 || true
-
-            # ------------------------------------------------------------------
-            # 4) Smoke test (fail deploy if unhealthy)
-            # ------------------------------------------------------------------
-            echo ">> Smoke test — internal (container ports on 127.0.0.1)"
-            curl -fsS http://127.0.0.1:5000/api/health  > /dev/null && echo "backend ok" || (echo "backend health failed" && exit 1)
-            curl -fsS http://127.0.0.1:8000/health      > /dev/null && echo "ai ok" || (echo "ai health failed" && exit 1)
-            curl -fsS http://127.0.0.1:3000/ > /dev/null && echo "frontend ok" || (echo "frontend health failed" && exit 1)
-
-            echo ">> Smoke test — Caddy container is listening on :80/:443"
-            if ! docker ps --filter "name=eventnexus-caddy" --filter "status=running" | grep -q eventnexus-caddy; then
-              echo "caddy container not running" && exit 1
-            fi
-            echo "caddy running"
-
-            echo ">> Smoke test — public HTTPS end-to-end (non-fatal on first run; ACME issuance can take ~60s)"
-            https_ok=0
-            for i in $(seq 1 15); do
-              if curl -fsS --max-time 10 "https://$DOMAIN/api/health" > /dev/null 2>&1 \
-                 && curl -fsS --max-time 10 "https://$DOMAIN/" > /dev/null 2>&1; then
-                echo "     ✓ https://$DOMAIN (frontend + /api) ok"; https_ok=1; break
-              fi
-              echo "     … waiting for valid TLS cert + routing ($i/15)"; sleep 10
-            done
-            if [ "$https_ok" != "1" ]; then
-              echo "::warning::HTTPS not verified yet. Check 'docker logs eventnexus-caddy'. Usual causes: DNS for $DOMAIN not pointing at this host, or the EC2 security group is missing inbound 80/443 (ACME HTTP-01 needs :80). Re-run once fixed — no rebuild needed."
-            fi
-
-            # ------------------------------------------------------------------
-            # 5) Cleanup old images (keep last 2)
-            # ------------------------------------------------------------------
-            echo ">> Pruning dangling images"
-            docker image prune -f --filter "until=24h" || true
-            docker system df || true
-
-            echo "== Deploy complete =="
+            git fetch origin '${{ github.ref_name }}' --depth 1
+            git reset --hard 'origin/${{ github.ref_name }}'
+            git log --oneline -1
+            export IMAGE_PREFIX='${{ env.IMAGE_PREFIX }}'
+            export IMAGE_TAG='latest'
+            export DOMAIN='${{ vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech' }}'
+            export ACME_EMAIL='${{ secrets.ACME_EMAIL != '' && secrets.ACME_EMAIL || format('admin@{0}', vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech') }}'
+            export FRONTEND_URL='${{ vars.FRONTEND_URL != '' && vars.FRONTEND_URL || format('https://{0},https://www.{0}', vars.DOMAIN != '' && vars.DOMAIN || 'eventnexus.tech') }}'
+            export GHCR_USER='${{ github.actor }}'
+            export GHCR_TOKEN='${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}'
+            bash infra/deploy-remote.sh
 
       - name: Notify on failure
         if: failure()
