@@ -3,71 +3,80 @@ import { ArrowRight } from "lucide-react"
 import { Reveal } from "@/components/anim/reveal"
 import { Logo } from "@/components/ui/logo"
 
-type FooterLink = { label: string; href: string; hint?: string }
+type FooterLink = { label: string; href: string; external?: boolean; hint?: string }
 
-// Every href resolves to a real route or in-page anchor in this app.
-// Notes on the two "demo" targets:
-//  - Browse Events → /events is the public attendee browsing experience
-//    (search + filters + listings), NOT an account dashboard.
-//  - Dashboard → /analytics renders the charts dashboard from the public
-//    events feed; it needs no login and never touches a real account.
+// Every href resolves to a real route / anchor in this app. Features and
+// "How It Works" are intentionally absent here — they live in the navbar and
+// the landing sections. Notes on the demo targets:
+//  - Browse Events → /events is the public attendee browsing experience.
+//  - Dashboard → /analytics renders from the public events feed; no login,
+//    no real account, never the Admin console.
 const columns: { title: string; links: FooterLink[] }[] = [
   {
-    title: "Explore",
+    title: "Discover",
     links: [
       { label: "Browse Events", href: "/events" },
-      { label: "How It Works", href: "/#how" },
+      { label: "Categories", href: "/events?filters=1" },
       { label: "Recommendations", href: "/recommendations" },
+      { label: "Upcoming Events", href: "/events?status=Upcoming" },
     ],
   },
   {
-    title: "For Organizations",
+    title: "Organizations",
     links: [
-      { label: "Register an Organization", href: "/org-register" },
-      { label: "Create Events", href: "/organizer/events/create" },
+      { label: "Register Organization", href: "/org-register" },
+      { label: "Organizer Guide", href: "/organizer" },
+      { label: "Create an Event", href: "/organizer/events/create" },
       { label: "Collaboration", href: "/organizer/collaboration" },
     ],
   },
   {
-    title: "Platform",
+    title: "Company",
     links: [
-      { label: "Dashboard", href: "/analytics", hint: "Live demo — no sign-in" },
-      { label: "For Organizers", href: "/organizer" },
+      { label: "About EventNexus", href: "/about" },
+      { label: "Our Mission", href: "/about#mission" },
+      { label: "Contact", href: "/contact" },
     ],
   },
   {
     title: "Support",
     links: [
-      { label: "Contact Us", href: "/contact" },
       { label: "FAQs", href: "/faqs" },
+      { label: "Help Center", href: "/contact" },
       { label: "Privacy Policy", href: "/privacy" },
       { label: "Terms & Conditions", href: "/terms" },
     ],
   },
+  {
+    title: "Connect",
+    links: [
+      { label: "LinkedIn", href: "https://www.linkedin.com/in/anjali-mishra-tech2025/", external: true },
+      { label: "GitHub", href: "https://github.com/Anjali0616/Eventnexus", external: true },
+      { label: "Twitter / X", href: "https://x.com", external: true },
+    ],
+  },
 ]
-
-const LINKEDIN_URL = "https://www.linkedin.com/in/anjali-mishra-tech2025/"
 
 function FooterLinkItem({ link }: { link: FooterLink }) {
   const base = "text-sm text-white/55 transition-colors hover:text-white"
-  const inner = link.href.startsWith("#") ? (
-    <a href={link.href} className={base}>
-      {link.label}
-    </a>
-  ) : (
+  if (link.external) {
+    return (
+      <a href={link.href} target="_blank" rel="noreferrer noopener" className={base}>
+        {link.label}
+      </a>
+    )
+  }
+  if (link.href.startsWith("#")) {
+    return (
+      <a href={link.href} className={base}>
+        {link.label}
+      </a>
+    )
+  }
+  return (
     <Link href={link.href} className={base}>
       {link.label}
     </Link>
-  )
-  return (
-    <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-      {inner}
-      {link.hint && (
-        <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] font-medium text-white/45">
-          {link.hint}
-        </span>
-      )}
-    </span>
   )
 }
 
@@ -95,28 +104,35 @@ export function Footer() {
 
       {/* link grid */}
       <div className="mx-auto max-w-7xl px-6 pb-12">
-        <div className="grid grid-cols-2 gap-x-8 gap-y-10 border-t border-white/10 pt-12 md:grid-cols-3 lg:grid-cols-6">
-          <div className="col-span-2 md:col-span-3 lg:col-span-2">
+        <div className="grid gap-10 border-t border-white/10 pt-12 lg:grid-cols-[1.3fr_3fr] lg:gap-16">
+          {/* brand + tagline */}
+          <div>
             <Link href="/" className="inline-flex transition-opacity hover:opacity-80">
               <Logo onDark className="h-8" />
             </Link>
-            <p className="mt-4 max-w-xs text-sm leading-relaxed text-white/55">
+            <p className="font-display mt-4 text-base font-semibold text-white">
+              Connect. Collaborate. Create.
+            </p>
+            <p className="mt-2 max-w-xs text-sm leading-relaxed text-white/55">
               AI-enabled, secure, cloud-based event management for multi-organization collaboration.
             </p>
           </div>
 
-          {columns.map((col) => (
-            <nav key={col.title} aria-label={col.title}>
-              <h3 className="font-display text-sm font-semibold text-white">{col.title}</h3>
-              <ul className="mt-4 space-y-3">
-                {col.links.map((l) => (
-                  <li key={l.label}>
-                    <FooterLinkItem link={l} />
-                  </li>
-                ))}
-              </ul>
-            </nav>
-          ))}
+          {/* five link columns */}
+          <div className="grid grid-cols-2 gap-x-8 gap-y-10 sm:grid-cols-3 lg:grid-cols-5">
+            {columns.map((col) => (
+              <nav key={col.title} aria-label={col.title}>
+                <h3 className="font-display text-sm font-semibold text-white">{col.title}</h3>
+                <ul className="mt-4 space-y-3">
+                  {col.links.map((l) => (
+                    <li key={l.label}>
+                      <FooterLinkItem link={l} />
+                    </li>
+                  ))}
+                </ul>
+              </nav>
+            ))}
+          </div>
         </div>
 
         {/* base bar */}
@@ -125,7 +141,7 @@ export function Footer() {
           <span>
             Built by{" "}
             <a
-              href={LINKEDIN_URL}
+              href="https://www.linkedin.com/in/anjali-mishra-tech2025/"
               target="_blank"
               rel="noreferrer noopener"
               className="font-medium text-white/70 underline-offset-4 transition-colors hover:text-white hover:underline"

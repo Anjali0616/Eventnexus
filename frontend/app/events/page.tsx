@@ -53,11 +53,19 @@ export default function AttendeeEventsPage() {
   const registerMut = useRegisterForEvent()
   const [joiningId, setJoiningId] = useState<string | null>(null)
 
-  // Seed search from the topbar's URL (?q=...) — done in an effect, not a
-  // state initializer, so it stays hydration-safe on the server render.
+  // Seed filters from the URL (?q= from the topbar; ?category=, ?status= and
+  // ?filters=1 from the site nav / footer "Categories" and "Upcoming Events"
+  // links). Done in an effect, not a state initializer, so it stays
+  // hydration-safe on the server render.
   useEffect(() => {
-    const q = new URLSearchParams(window.location.search).get("q")
+    const sp = new URLSearchParams(window.location.search)
+    const q = sp.get("q")
     if (q) setQuery(q)
+    const cat = sp.get("category")
+    if (cat && (["All", ...EVENT_CATEGORIES] as string[]).includes(cat)) setActiveCategory(cat)
+    const st = sp.get("status")
+    if (st && statusOptions.some((o) => o.value === st)) setStatus(st)
+    if (sp.get("filters") === "1" || cat) setShowFilters(true)
   }, [])
 
   // Real-time: when an organizer publishes a new event, invalidate lists so
